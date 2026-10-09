@@ -58,6 +58,21 @@ interface Messages {
   operationFailed: string;
   refresh: string;
   closeNotice: string;
+  aboutBuild: string;
+  version: string;
+  build: string;
+  buildClean: string;
+  buildModified: string;
+  buildUnversioned: string;
+  ciBuild: string;
+  localBuild: string;
+  errorCode: string;
+  diagnostics: string;
+  hideDiagnostics: string;
+  copyDiagnostics: string;
+  copied: string;
+  copyManually: string;
+  diagnosticsPrivacy: string;
   states: Record<JobState, string>;
   kinds: Record<MediaKind, string>;
 }
@@ -89,7 +104,7 @@ export const messages: Record<Language, Messages> = {
     sourceNotice: 'The source was opened in Telegram.',
     sourceUnavailable: 'Open the original chat in Telegram and find this attachment.',
     interruptedHint:
-      'The Telegram tab was closed or reloaded. Open the attachment and save it again.',
+      'The Telegram tab that was saving this file was closed, reloaded or left Telegram. Open the attachment and save it again.',
     downloadingUnknown: 'Total size unknown',
     keepTabOpen: 'Keep the Telegram tab open until the file is saved.',
     language: 'Language',
@@ -111,6 +126,22 @@ export const messages: Record<Language, Messages> = {
     operationFailed: 'This action could not be completed. Please try again.',
     refresh: 'Try again',
     closeNotice: 'Dismiss message',
+    aboutBuild: 'About this build',
+    version: 'Version',
+    build: 'Build',
+    buildClean: 'Built from a commit without local changes.',
+    buildModified: 'Includes local changes that are not part of the commit.',
+    buildUnversioned: 'Built without Git information.',
+    ciBuild: 'CI run',
+    localBuild: 'Local build',
+    errorCode: 'Code',
+    diagnostics: 'Diagnostics',
+    hideDiagnostics: 'Hide diagnostics',
+    copyDiagnostics: 'Copy diagnostics',
+    copied: 'Copied',
+    copyManually: 'Select the text above and copy it manually.',
+    diagnosticsPrivacy:
+      'Only the text above is copied. It contains no file names, links, message text or account and chat IDs.',
     states: {
       queued: 'Queued',
       downloading: 'Downloading',
@@ -158,7 +189,7 @@ export const messages: Record<Language, Messages> = {
     sourceNotice: 'Исходное сообщение открыто в Telegram.',
     sourceUnavailable: 'Откройте исходный чат в Telegram и найдите это вложение.',
     interruptedHint:
-      'Вкладка Telegram была закрыта или обновлена. Откройте вложение и сохраните его заново.',
+      'Вкладку Telegram, которая сохраняла файл, закрыли, перезагрузили или увели с Telegram. Откройте вложение и сохраните его заново.',
     downloadingUnknown: 'Полный размер неизвестен',
     keepTabOpen: 'Не закрывайте вкладку Telegram до завершения сохранения.',
     language: 'Язык',
@@ -180,6 +211,22 @@ export const messages: Record<Language, Messages> = {
     operationFailed: 'Не удалось выполнить действие. Попробуйте ещё раз.',
     refresh: 'Попробовать снова',
     closeNotice: 'Закрыть уведомление',
+    aboutBuild: 'О сборке',
+    version: 'Версия',
+    build: 'Сборка',
+    buildClean: 'Собрано из коммита без локальных изменений.',
+    buildModified: 'Содержит локальные изменения, которых нет в коммите.',
+    buildUnversioned: 'Собрано без данных Git.',
+    ciBuild: 'Сборка CI',
+    localBuild: 'Локальная сборка',
+    errorCode: 'Код',
+    diagnostics: 'Диагностика',
+    hideDiagnostics: 'Скрыть диагностику',
+    copyDiagnostics: 'Копировать диагностику',
+    copied: 'Скопировано',
+    copyManually: 'Выделите текст выше и скопируйте его вручную.',
+    diagnosticsPrivacy:
+      'Копируется только текст выше. В нём нет имён файлов, ссылок, текста сообщений и ID аккаунтов и чатов.',
     states: {
       queued: 'В очереди',
       downloading: 'Скачивается',
