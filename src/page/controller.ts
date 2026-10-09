@@ -205,7 +205,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
     try {
       const reply = await bridge.request({ type: 'hello', client: adapter.client, ready: true });
       connected = reply.ok === true;
-      const parsed = settingsSchema.safeParse(reply.settings);
+      const parsed = settingsSchema.safeParse(reply.settings, { jitless: true });
       if (parsed.success) settings = parsed.data;
       if (!disposed) for (const control of controls.values()) paint(control);
     } catch {

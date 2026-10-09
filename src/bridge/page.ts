@@ -61,7 +61,8 @@ export class PageBridge {
       this.pending.delete(data.requestId);
       pending.resolve(data.payload);
     } else if (data.direction === 'extension-command') {
-      const parsed = commandSchema.safeParse(data.command);
+      // Telegram can apply a meta CSP after document_start, so validation must never JIT.
+      const parsed = commandSchema.safeParse(data.command, { jitless: true });
       if (!parsed.success || !this.onCommand) return;
       void this.onCommand(parsed.data)
         .then((payload) => {

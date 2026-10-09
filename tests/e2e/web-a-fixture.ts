@@ -83,20 +83,32 @@ function runApiWorker(files: FixtureFile[]) {
   );
 }
 
-export async function openAFixture(context: BrowserContext, files: FixtureFile[]): Promise<Page> {
+export async function openAFixture(
+  context: BrowserContext,
+  files: FixtureFile[],
+  options: { metaCsp?: boolean } = {},
+): Promise<Page> {
   const script = `(${runApiWorker.toString()})(${JSON.stringify(files)});`;
+  const pageScript = `(${installFixture.toString()})(${JSON.stringify(files)}, 'a');
+    const worker = new Worker('/a/fixture-worker.js', { type: 'module' });
+    worker.addEventListener('message', event => { if (event.data.fixtureRead) window.__telegramFixture.reads.push(event.data.fixtureRead); });
+    worker.postMessage({ payloads: [{ type: 'initApi', messageId: 'fixture-init', args: [] }] });`;
+  // Telegram A installs CSP using a meta element. At document_start it has not
+  // been parsed yet; an eval capability probe can succeed and fail later.
+  const csp = options.metaCsp
+    ? `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">`
+    : '';
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Own Telegram A integration fixture</title>
+    ${csp}
     <style>body{font:16px system-ui;margin:32px;background:#edf6fa}.Message{position:relative;width:420px;height:120px;padding:20px;background:white}</style>
-    <script>(${installFixture.toString()})(${JSON.stringify(files)}, 'a');
-      const worker = new Worker('/a/fixture-worker.js', { type: 'module' });
-      worker.addEventListener('message', event => { if (event.data.fixtureRead) window.__telegramFixture.reads.push(event.data.fixtureRead); });
-      worker.postMessage({ payloads: [{ type: 'initApi', messageId: 'fixture-init', args: [] }] });
-    </script></head><body><h1>Own test audio</h1><div id="MiddleColumn"><div data-list-key="-42_main_thread">
+    <script src="/a/fixture.js"></script></head><body><h1>Own test audio</h1><div id="MiddleColumn"><div data-list-key="-42_main_thread">
     ${files.map((file) => `<article class="Message" data-message-id="${file.messageId}"><div class="Audio">Fixture-${file.messageId}.mp3</div></article>`).join('')}
     </div></div><audio id="unrelated-player"></audio></body></html>`;
   await context.route('https://web.telegram.org/**', async (route) => {
     if (new URL(route.request().url()).pathname === '/a/fixture-worker.js') {
       await route.fulfill({ status: 200, contentType: 'text/javascript', body: script });
+    } else if (new URL(route.request().url()).pathname === '/a/fixture.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript', body: pageScript });
     } else if (route.request().isNavigationRequest())
       await route.fulfill({ status: 200, contentType: 'text/html', body: html });
     else await route.abort();

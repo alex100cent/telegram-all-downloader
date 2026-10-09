@@ -2,6 +2,24 @@ import { test, expect } from './fixtures';
 import { clickDownload, expectedHash, openFixture, type FixtureFile } from './web-k-fixture';
 import { openAFixture } from './web-a-fixture';
 
+test('Web A connects and saves with a meta CSP that forbids JavaScript eval', async ({
+  context,
+  popup,
+}) => {
+  const file: FixtureFile = { messageId: '502', size: 8_117, seed: 53 };
+  const page = await openAFixture(context, [file], { metaCsp: true });
+  await expect(popup.getByText('Connected', { exact: true })).toBeVisible();
+  await page
+    .locator('.Message[data-message-id="502"]')
+    .getByRole('button', { name: 'Save file: Fixture-502.mp3', exact: true })
+    .click();
+  await expect(popup.locator('.job-card .job-status')).toContainText('Saved');
+  expect(await page.evaluate(() => window.__telegramFixture.hash('Fixture-502.mp3'))).toEqual({
+    size: file.size,
+    hash: expectedHash(file),
+  });
+});
+
 test('Web A uses the real Worker bridge to save unplayed audio with an exact final tail', async ({
   context,
   popup,
