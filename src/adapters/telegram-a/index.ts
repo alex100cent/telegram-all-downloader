@@ -365,7 +365,7 @@ class WebAAdapter implements MediaAdapter {
     await validate();
     const key = `${peerId}:${messageId}`;
     let media = this.messages.get(key);
-    const chat = this.chats.get(peerId);
+    let chat = this.chats.get(peerId);
     if (chat && (!isChannel(peerId) || chat.accessHash)) {
       let refreshedSuccessfully = false;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -405,6 +405,8 @@ class WebAAdapter implements MediaAdapter {
       const current = this.messages.get(key);
       if (JSON.stringify(current) === signature && (this.revisions.get(key) ?? 0) === revision)
         return;
+      const currentChat = this.chats.get(peerId);
+      if (currentChat && (!isChannel(peerId) || currentChat.accessHash)) chat = currentChat;
       if (chat && (!isChannel(peerId) || chat.accessHash)) {
         for (let attempt = 0; attempt < 2; attempt++) {
           const beforeRequest = this.revisions.get(key) ?? 0;

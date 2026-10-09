@@ -213,6 +213,51 @@ describe('Web A identity and media metadata', () => {
     expect(worker.sent.filter((payload) => payload.name === 'fetchMessage')).toHaveLength(2);
   });
 
+  it('uses a chat route discovered after preparation and retains it if a later snapshot loses its access hash', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    const master = new FakeChannel('tt-global_1');
+    adapter = createWebAAdapter();
+    const worker = boot();
+    const peerId = '-1000000000042';
+    const original = { ...message(11, '701'), chatId: peerId };
+    worker.emit([
+      { type: 'methodResponse', messageId: 'history', response: { messages: [original] } },
+    ]);
+    const container = document.querySelector<HTMLElement>('[data-list-key]')!;
+    container.dataset.listKey = `${peerId}_-1_thread`;
+    container.innerHTML = '<div class="Message" data-message-id="11"></div>';
+    const prepared = await adapter.discover()[0]!.resolve();
+    expect(worker.sent.filter((payload) => payload.name === 'fetchMessage')).toHaveLength(0);
+
+    worker.emit([
+      {
+        type: 'methodResponse',
+        messageId: 'chats',
+        response: { chats: [{ id: peerId, accessHash: '123' }] },
+      },
+    ]);
+    master.postMessage({
+      type: 'globalDiffUpdate',
+      diff: { messages: { byChatId: { __deleteAllChildren: true } } },
+    });
+    worker.handler = (payload) => {
+      expect(payload.name).toBe('fetchMessage');
+      expect(payload.args).toEqual([{ chat: { id: peerId, accessHash: '123' }, messageId: 11 }]);
+      worker.reply(payload, { message: original });
+    };
+    await expect(prepared.validate?.()).resolves.toBeUndefined();
+    master.postMessage({
+      type: 'globalUpdate',
+      global: {
+        currentUserId: '101',
+        chats: { byId: { [peerId]: { id: peerId } } },
+        messages: { byChatId: {} },
+      },
+    });
+    await expect(prepared.validate?.()).resolves.toBeUndefined();
+    expect(worker.sent.filter((payload) => payload.name === 'fetchMessage')).toHaveLength(2);
+  });
+
   it.each(['deleted', 'media-id', 'size', 'filename', 'ttl', 'peer'])(
     'rejects a %s change when refreshing an evicted prepared source',
     async (change) => {
