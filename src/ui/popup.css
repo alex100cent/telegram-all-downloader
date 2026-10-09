@@ -231,6 +231,41 @@ h2 {
   margin-top: 6px;
   padding-right: 20px;
 }
+code,
+pre {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.about-build {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+.about-build h3 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.about-build dl {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.about-build dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.about-build dt {
+  color: var(--muted);
+}
+.about-build dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  -webkit-user-select: text;
+  user-select: text;
+}
 .notice {
   display: flex;
   align-items: flex-start;
@@ -528,6 +563,57 @@ h2 {
   font-size: 11px;
   line-height: 1.45;
   color: var(--muted);
+}
+.job-diagnostics {
+  margin-top: 6px;
+}
+.diagnostics-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.error-code {
+  font-size: 10px;
+  color: var(--muted);
+}
+.error-code code {
+  color: var(--text-secondary);
+}
+.diagnostics-panel {
+  margin-top: 6px;
+}
+.diagnostics-panel pre {
+  margin: 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: var(--hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.diagnostics-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.diagnostics-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10px;
+}
+.diagnostics-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
 }
 .section-hint {
   font-size: 10px;

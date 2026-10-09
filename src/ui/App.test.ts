@@ -158,6 +158,95 @@ describe('popup', () => {
     expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'cancel' }));
   });
 
+  it('identifies the running build in settings', async () => {
+    await render();
+    await click('Settings');
+    const about = container.querySelector('.about-build');
+    expect(about?.textContent).toContain('Version0.0.0-test');
+    expect(about?.textContent).toContain('Buildabc1234');
+    expect(about?.textContent).toContain('Built from a commit without local changes. Local build.');
+  });
+
+  it('previews and copies failure diagnostics without private identifiers', async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Test Browser 1.0');
+    vi.spyOn(navigator, 'clipboard', 'get').mockReturnValue({ writeText } as unknown as Clipboard);
+    const job = makeJob({
+      state: 'failed',
+      error: 'disk_error',
+      bytes: 3 * 1024 * 1024,
+      total: 12 * 1024 * 1024,
+      attempt: 2,
+      tabId: 9191,
+      sessionId: 'session-secret-7',
+    });
+    job.media = {
+      identity: {
+        client: 'k',
+        accountId: '777000111',
+        peerId: '-1009876543210',
+        messageId: '4242',
+        mediaId: '5555666677778888',
+        variant: 'original',
+      },
+      kind: 'video',
+      filename: 'Private Holiday Video.mp4',
+      mimeType: 'video/mp4',
+      byteSize: 12 * 1024 * 1024,
+      sourceUrl: 'https://web.telegram.org/k/#-9876543210?message=4242',
+    };
+    jobs = [job];
+    await render();
+    expect(container.querySelector('.error-code')?.textContent).toBe('Code: disk_error');
+    await click('Diagnostics');
+    const report = container.querySelector('.diagnostics-panel pre')?.textContent ?? '';
+    expect(report).toBe(
+      [
+        'Telegram All Downloader 0.0.0-test, build abc1234, local',
+        'Browser: Test Browser 1.0',
+        'Telegram: Web K',
+        'Attachment: video, video/mp4, 12 MiB',
+        'Result: failed, disk_error, 25% transferred, attempt 2',
+      ].join('\n'),
+    );
+    for (const secret of [
+      'Private Holiday',
+      '777000111',
+      '9876543210',
+      '4242',
+      '5555666677778888',
+      'web.telegram.org',
+      'session-secret',
+      '9191',
+    ])
+      expect(report).not.toContain(secret);
+    await click('Copy diagnostics');
+    expect(writeText).toHaveBeenCalledWith(report);
+    expect(container.querySelector('.diagnostics-actions button')?.textContent).toBe('Copied');
+  });
+
+  it('asks for manual copying when the clipboard is unavailable', async () => {
+    vi.spyOn(navigator, 'clipboard', 'get').mockReturnValue({
+      writeText: vi.fn().mockRejectedValue(new Error('denied')),
+    } as unknown as Clipboard);
+    jobs = [makeJob({ state: 'failed', error: 'timeout' })];
+    await render();
+    await click('Diagnostics');
+    await click('Copy diagnostics');
+    expect(container.querySelector('.diagnostics-panel [role="status"]')?.textContent).toBe(
+      'Select the text above and copy it manually.',
+    );
+  });
+
+  it('explains an interrupted source tab instead of a missing file', async () => {
+    jobs = [makeJob({ state: 'interrupted', error: 'source_unavailable' })];
+    await render();
+    expect(container.querySelector('.job-error')?.textContent).toBe(
+      'The Telegram tab that was saving this file was closed, reloaded or left Telegram. Open the attachment and save it again.',
+    );
+    expect(container.querySelector('.error-code')?.textContent).toBe('Code: interrupted');
+  });
+
   it('polls only while the popup is mounted', async () => {
     await render();
     expect(sendMessage).toHaveBeenCalledTimes(1);

@@ -418,6 +418,9 @@ describe('page controller', () => {
       expect.objectContaining({ type: 'finish', state: 'failed', error: 'disk_error' }),
     );
     expect(button('first').title).toContain('Check free disk space');
+    expect(document.querySelector('[data-tad-notice]')?.shadowRoot?.textContent).toContain(
+      'Could not write the file. Check free disk space and retry. Code: disk_error',
+    );
   });
 
   it('cancels while waiting for the start grant without opening a file writer', async () => {

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { BUILD } from '../build';
 import { DONATION_URL, REPOSITORY_URL } from '../config';
 import type { ErrorCode } from '../domain/errors';
 import { ACTIVE_STATES, DEFAULT_SETTINGS, type JobRecord, type Settings } from '../domain/jobs';
 import type { MediaKind, TelegramClient } from '../domain/media';
 import { errorMessages, messages, resolveLanguage, type Language } from '../i18n';
+import { detectBrowser, diagnosticsReport } from './diagnostics';
 import { formatBytes, formatTimestamp, jobProgress } from './format';
 import { Icon, type IconName } from './Icon';
 
@@ -20,6 +22,8 @@ type Action =
 type ListReply = ({ ok: true } & Snapshot) | { ok: false; error?: string };
 type ActionReply = { ok: boolean; error?: string };
 
+const ISSUE_URL = `${REPOSITORY_URL}/issues/new?template=bug_report.md`;
+
 const mediaIcons: Record<MediaKind, IconName> = {
   photo: 'photo',
   video: 'video',
@@ -31,14 +35,86 @@ const mediaIcons: Record<MediaKind, IconName> = {
   sticker: 'sticker',
 };
 
+function Diagnostics({
+  job,
+  language,
+  browser,
+}: {
+  job: JobRecord;
+  language: Language;
+  browser: string;
+}) {
+  const t = messages[language];
+  const [open, setOpen] = useState(false);
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'manual'>('idle');
+  const report = useRef<HTMLPreElement>(null);
+  const text = diagnosticsReport(job, browser);
+  const code = job.state === 'interrupted' ? 'interrupted' : (job.error ?? 'unknown');
+
+  async function copyReport() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopy('copied');
+    } catch {
+      if (report.current) getSelection()?.selectAllChildren(report.current);
+      setCopy('manual');
+    }
+  }
+
+  return (
+    <div className="job-diagnostics">
+      <div className="diagnostics-row">
+        <span className="error-code">
+          {t.errorCode}: <code>{code}</code>
+        </span>
+        <button
+          className="text-button"
+          type="button"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen((value) => !value);
+            setCopy('idle');
+          }}
+        >
+          {open ? t.hideDiagnostics : t.diagnostics}
+        </button>
+      </div>
+      {open && (
+        <div className="diagnostics-panel">
+          <pre ref={report} tabIndex={0} aria-label={t.diagnostics}>
+            {text}
+          </pre>
+          <p className="diagnostics-hint">{t.diagnosticsPrivacy}</p>
+          <div className="diagnostics-actions">
+            <button className="text-button" type="button" onClick={() => void copyReport()}>
+              {copy === 'copied' ? t.copied : t.copyDiagnostics}
+            </button>
+            <a href={ISSUE_URL} target="_blank" rel="noreferrer">
+              {t.reportIssue}
+              <Icon name="external" width="12" height="12" />
+            </a>
+          </div>
+          {copy === 'manual' && (
+            <p className="diagnostics-hint" role="status">
+              {t.copyManually}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JobCard({
   job,
   language,
+  browser,
   disabled,
   onAction,
 }: {
   job: JobRecord;
   language: Language;
+  browser: string;
   disabled: boolean;
   onAction: (action: Action) => void;
 }) {
@@ -47,11 +123,12 @@ function JobCard({
   const canCancel = job.state === 'queued' || job.state === 'downloading';
   const canRetry = ['failed', 'cancelled', 'interrupted'].includes(job.state);
   const { total, percent } = jobProgress(job);
-  const error = job.error
-    ? errorMessages[language][job.error]
-    : job.state === 'interrupted'
+  const error =
+    job.state === 'interrupted'
       ? t.interruptedHint
-      : undefined;
+      : job.error
+        ? errorMessages[language][job.error]
+        : undefined;
   const statusClass =
     job.state === 'completed'
       ? 'success'
@@ -147,6 +224,9 @@ function JobCard({
         </div>
       )}
       {!active && error && <p className="job-error">{error}</p>}
+      {(job.state === 'failed' || job.state === 'interrupted') && (
+        <Diagnostics job={job} language={language} browser={browser} />
+      )}
     </li>
   );
 }
@@ -157,6 +237,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
+  const [browser, setBrowser] = useState(navigator.userAgent);
   const mounted = useRef(false);
   const loading = useRef(false);
   const actionPending = useRef(false);
@@ -190,6 +271,9 @@ export function App() {
 
   useEffect(() => {
     mounted.current = true;
+    void detectBrowser().then((value) => {
+      if (mounted.current) setBrowser(value);
+    });
     void refresh();
     const timer = window.setInterval(() => {
       if (!actionPending.current) void refresh();
@@ -353,6 +437,29 @@ export function App() {
             <p className="setting-hint" id="history-hint">
               {t.historyHint}
             </p>
+            <div className="about-build" role="group" aria-labelledby="about-title">
+              <h3 id="about-title">{t.aboutBuild}</h3>
+              <dl>
+                <div>
+                  <dt>{t.version}</dt>
+                  <dd>{BUILD.version}</dd>
+                </div>
+                <div>
+                  <dt>{t.build}</dt>
+                  <dd>
+                    <code>{BUILD.id}</code>
+                  </dd>
+                </div>
+              </dl>
+              <p className="setting-hint">
+                {BUILD.commit
+                  ? BUILD.modified
+                    ? t.buildModified
+                    : t.buildClean
+                  : t.buildUnversioned}{' '}
+                {BUILD.ciRun ? `${t.ciBuild} #${BUILD.ciRun}.` : `${t.localBuild}.`}
+              </p>
+            </div>
           </section>
         )}
 
@@ -432,6 +539,7 @@ export function App() {
                   key={job.id}
                   job={job}
                   language={language}
+                  browser={browser}
                   disabled={pending}
                   onAction={(action) => void execute(action)}
                 />
@@ -463,6 +571,7 @@ export function App() {
                   key={job.id}
                   job={job}
                   language={language}
+                  browser={browser}
                   disabled={pending}
                   onAction={(action) => void execute(action)}
                 />
@@ -491,7 +600,7 @@ export function App() {
             {t.help}
             <Icon name="external" width="12" height="12" />
           </a>
-          <a href={`${REPOSITORY_URL}/issues/new`} target="_blank" rel="noreferrer">
+          <a href={ISSUE_URL} target="_blank" rel="noreferrer">
             {t.reportIssue}
           </a>
         </div>

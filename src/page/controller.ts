@@ -64,6 +64,7 @@ const copy = {
     tooLarge: 'Размер файла превышает поддерживаемый предел 4 GiB.',
     unknown: 'Файл не удалось определить однозначно. Откройте исходное сообщение.',
     changed: 'Аккаунт изменился. Выберите файл заново.',
+    code: 'Код',
     close: 'Закрыть',
   },
   en: {
@@ -85,6 +86,7 @@ const copy = {
     tooLarge: 'This file exceeds the supported 4 GiB limit.',
     unknown: 'Could not identify this attachment precisely. Open its original message.',
     changed: 'The account changed. Select the file again.',
+    code: 'Code',
     close: 'Close',
   },
 };
@@ -157,6 +159,9 @@ export function startPageController(adapter: MediaAdapter): () => void {
     if (code === 'file_too_large') return words().tooLarge;
     if (code === 'destination_required') return words().noPicker;
     return words().unavailable;
+  }
+  function failureNotice(code: ErrorCode): string {
+    return `${describeError(code)} ${words().code}: ${code}`;
   }
   function paint(control: Control) {
     const job = control.jobId ? jobs.get(control.jobId) : undefined;
@@ -372,7 +377,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
     } catch (error) {
       job.error = job.controller.signal.aborted ? 'cancelled' : errorCode(error);
       job.state = job.error === 'cancelled' ? 'cancelled' : 'failed';
-      if (job.state === 'failed') showNotice(describeError(job.error));
+      if (job.state === 'failed') showNotice(failureNotice(job.error));
     }
     await finish(job);
   }
@@ -396,7 +401,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
           run: (event) => selectDestination(control, event),
         });
     } else if (liveControl(control) && control.prepareError)
-      showNotice(describeError(control.prepareError));
+      showNotice(failureNotice(control.prepareError));
   }
   function selectDestination(control: Control, event: MouseEvent) {
     event.preventDefault();
@@ -501,7 +506,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
           await finish(selectedJob);
         }
         if (errorCode(error) !== 'cancelled' && (!selectedJob || selectedJob.state === 'failed'))
-          showNotice(describeError(errorCode(error)));
+          showNotice(failureNotice(errorCode(error)));
       })
       .finally(() => {
         selections.delete(key);
