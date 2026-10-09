@@ -220,6 +220,75 @@ describe('page controller', () => {
     expect(second.resolve).not.toHaveBeenCalled();
   });
 
+  it('recreates a removed control on the same anchor and releases its prepared source once', async () => {
+    const first = makeSource();
+    const replacement = makeSource();
+    const candidate = addCandidate('first', first);
+    vi.mocked(candidate.resolve).mockResolvedValueOnce(first).mockResolvedValueOnce(replacement);
+    await start();
+    const previousButton = button('first');
+
+    candidate.anchor.replaceChildren(document.createElement('span'));
+    await vi.advanceTimersByTimeAsync(400);
+    await flush();
+
+    expect(candidate.anchor.isConnected).toBe(true);
+    expect(previousButton.isConnected).toBe(false);
+    expect(button('first')).not.toBe(previousButton);
+    expect(document.querySelectorAll('[data-tad-control]')).toHaveLength(1);
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(replacement.dispose).not.toHaveBeenCalled();
+    expect(createWritable).not.toHaveBeenCalled();
+
+    await click(button('first'));
+    await command({ type: 'start', jobId: enqueuedId() });
+    expect(first.read).not.toHaveBeenCalled();
+    expect(replacement.read).toHaveBeenCalledOnce();
+    expect(createWritable).toHaveBeenCalledOnce();
+    expect(writer.close).toHaveBeenCalledOnce();
+    dispose?.();
+    dispose?.();
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(replacement.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('reconnects a recreated control to its active writer without starting a second transfer', async () => {
+    const source = makeSource();
+    const replacement = makeSource();
+    const reading = deferred<Awaited<ReturnType<ResolvedMedia['read']>>>();
+    source.read.mockReturnValue(reading.promise);
+    const candidate = addCandidate('first', source);
+    vi.mocked(candidate.resolve).mockResolvedValueOnce(source).mockResolvedValueOnce(replacement);
+    await start();
+    await click(button('first'));
+    const jobId = enqueuedId();
+    await command({ type: 'start', jobId });
+    expect(createWritable).toHaveBeenCalledOnce();
+
+    candidate.anchor.replaceChildren(document.createElement('span'));
+    await vi.advanceTimersByTimeAsync(400);
+    await flush();
+
+    expect(button('first').dataset.active).toBe('true');
+    expect(source.dispose).not.toHaveBeenCalled();
+    expect(replacement.dispose).toHaveBeenCalledOnce();
+    await command({ type: 'start', jobId });
+    reading.resolve({ bytes: new Uint8Array([1, 2, 3]), totalSize: 3, done: true });
+    await flush();
+    expect(button('first').title).toContain('Saved');
+    expect(picker).toHaveBeenCalledOnce();
+    expect(createWritable).toHaveBeenCalledOnce();
+    expect(source.read).toHaveBeenCalledOnce();
+    expect(replacement.read).not.toHaveBeenCalled();
+    expect(writer.close).toHaveBeenCalledOnce();
+    expect(
+      bridge.request.mock.calls.filter(([payload]) => payload.type === 'enqueue'),
+    ).toHaveLength(1);
+    dispose?.();
+    expect(source.dispose).toHaveBeenCalledOnce();
+    expect(replacement.dispose).toHaveBeenCalledOnce();
+  });
+
   it('retains the prepared source after a cancelled picker and allows another save', async () => {
     const source = makeSource();
     addCandidate('first', source);
@@ -406,6 +475,36 @@ describe('page controller', () => {
     expect(source.dispose).toHaveBeenCalledOnce();
     expect(bridge.request).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'finish', state: 'failed', error: 'account_changed' }),
+    );
+  });
+
+  it('cancels pending source validation before opening a writer', async () => {
+    const source = makeSource();
+    source.validate.mockResolvedValueOnce(undefined).mockImplementationOnce(
+      (signal) =>
+        new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Validation cancelled', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+    addCandidate('first', source);
+    await start();
+    await click(button('first'));
+    const jobId = enqueuedId();
+    await command({ type: 'start', jobId });
+    const signal = source.validate.mock.calls[1]?.[0];
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    await command({ type: 'cancel', jobId });
+    expect(signal?.aborted).toBe(true);
+    expect(createWritable).not.toHaveBeenCalled();
+    expect(source.read).not.toHaveBeenCalled();
+    expect(source.dispose).toHaveBeenCalledOnce();
+    expect(bridge.request).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'finish', state: 'cancelled', error: 'cancelled' }),
     );
   });
 

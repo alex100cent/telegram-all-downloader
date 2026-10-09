@@ -217,7 +217,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
     return {
       info: { ...source.info, filename: safeFilename(source.info) },
       read: (offset, length, signal) => source.read(offset, length, signal),
-      validate: source.validate ? () => source.validate!() : undefined,
+      validate: source.validate ? (signal) => source.validate!(signal) : undefined,
       dispose: () => {
         if (released) return;
         released = true;
@@ -339,7 +339,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
         state: 'downloading',
       });
       if (grant.ok !== true) throw new DownloadError('source_unavailable');
-      await job.source.validate?.();
+      await job.source.validate?.(job.controller.signal);
       if (job.controller.signal.aborted) throw new DownloadError('cancelled');
       let writable: FileSystemWritableFileStream;
       try {
@@ -572,7 +572,8 @@ export function startPageController(adapter: MediaAdapter): () => void {
     for (const [key, control] of controls) {
       if (
         live.get(key)?.anchor !== control.candidate.anchor ||
-        !control.candidate.anchor.isConnected
+        !control.candidate.anchor.isConnected ||
+        !control.host.isConnected
       ) {
         removeControl(control);
         controls.delete(key);

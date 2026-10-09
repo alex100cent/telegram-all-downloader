@@ -106,6 +106,243 @@ afterEach(() => {
 });
 
 describe('Web A identity and media metadata', () => {
+  it.each(['photo', 'video', 'sticker'])(
+    'resolves an uncached %s from current hashed media markup by exact message ID',
+    async (type) => {
+      adapter = createWebAAdapter();
+      const worker = boot();
+      worker.emit([
+        { type: 'methodResponse', messageId: 'chats', response: { chats: [{ id: '-10042' }] } },
+      ]);
+      document.querySelector('[data-list-key]')!.innerHTML =
+        '<div class="Message" data-message-id="11"><div class="message-content media"><div class="media-inner n7fx0dq4 s8sR0xJD interactive"><canvas class="thumbnail"></canvas><img class="full-media" src="blob:unrelated-preview" /><span class="protector"></span></div></div></div>';
+      worker.handler = (payload) => {
+        expect(payload.name).toBe('fetchMessage');
+        expect(payload.args).toEqual([
+          { chat: { id: '-10042', accessHash: undefined }, messageId: 11 },
+        ]);
+        worker.reply(payload, { message: message(11, '701', type) });
+      };
+
+      const candidates = adapter.discover();
+      expect(candidates).toHaveLength(1);
+      const source = await candidates[0]!.resolve();
+      expect(source.info.identity).toMatchObject({
+        peerId: '-10042',
+        messageId: '11',
+        mediaId: '701',
+      });
+      expect(source.info.kind).toBe(type);
+      expect(worker.sent.filter((payload) => payload.name === 'downloadMedia')).toHaveLength(0);
+    },
+  );
+
+  it('ignores media markup belonging to link previews and quoted messages', () => {
+    adapter = createWebAAdapter();
+    boot();
+    document.querySelector('[data-list-key]')!.innerHTML =
+      '<div class="Message" data-message-id="11"><div class="WebPage"><div class="media-inner"><img src="blob:preview" /></div></div></div>' +
+      '<div class="Message" data-message-id="12"><div class="EmbeddedMessage"><div class="media-inner"><img src="blob:quoted" /></div></div></div>';
+    expect(adapter.discover()).toHaveLength(0);
+  });
+
+  it.each(['edited', 'deleted'])(
+    'does not overwrite a message %s during its first metadata request',
+    async (change) => {
+      adapter = createWebAAdapter();
+      const worker = boot();
+      worker.emit([
+        { type: 'methodResponse', messageId: 'chats', response: { chats: [{ id: '-10042' }] } },
+      ]);
+      document.querySelector('[data-list-key]')!.innerHTML =
+        '<div class="Message" data-message-id="11"><div class="media-inner n7fx0dq4"></div></div>';
+      const original = message(11, '701');
+      const edited = message(11, '702');
+      let requests = 0;
+      worker.handler = (payload) => {
+        if (++requests === 1) {
+          const update =
+            change === 'deleted'
+              ? { '@type': 'deleteMessages', chatId: '-10042', ids: [11] }
+              : {
+                  '@type': 'updateMessage',
+                  chatId: '-10042',
+                  id: 11,
+                  isFull: true,
+                  message: edited,
+                };
+          worker.emit([{ type: 'updates', updates: [update] }]);
+          worker.reply(payload, { message: original });
+        } else worker.reply(payload, { message: change === 'deleted' ? undefined : edited });
+      };
+      const source = adapter.discover()[0]!.resolve();
+      if (change === 'deleted')
+        await expect(source).rejects.toMatchObject({ code: 'source_unavailable' });
+      else expect((await source).info.identity.mediaId).toBe('702');
+      expect(requests).toBe(2);
+      expect(adapter.discover()[0]!.key).not.toContain(':701:');
+    },
+  );
+
+  it('revalidates a prepared photo after a complete snapshot omits cached metadata', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    const master = new FakeChannel('tt-global_1');
+    adapter = createWebAAdapter();
+    const worker = boot();
+    const photo = message(11, '701', 'photo');
+    worker.emit([
+      {
+        type: 'methodResponse',
+        messageId: 'history',
+        response: { messages: [photo], chats: [{ id: '-10042' }] },
+      },
+    ]);
+    document.querySelector('[data-list-key]')!.innerHTML =
+      '<div class="Message" data-message-id="11"><div class="media-inner n7fx0dq4"><img class="full-media" src="blob:preview" /></div></div>';
+    worker.handler = (payload) => worker.reply(payload, { message: photo });
+    const prepared = await adapter.discover()[0]!.resolve();
+    master.postMessage({
+      type: 'globalUpdate',
+      global: { currentUserId: '101', messages: { byChatId: {} } },
+    });
+    const candidates = adapter.discover();
+    expect(candidates).toHaveLength(1);
+    await expect(prepared.validate?.()).resolves.toBeUndefined();
+    expect(worker.sent.filter((payload) => payload.name === 'fetchMessage')).toHaveLength(2);
+    await expect(prepared.validate?.()).resolves.toBeUndefined();
+    expect(worker.sent.filter((payload) => payload.name === 'fetchMessage')).toHaveLength(2);
+  });
+
+  it.each(['deleted', 'media-id', 'size', 'filename', 'ttl', 'peer'])(
+    'rejects a %s change when refreshing an evicted prepared source',
+    async (change) => {
+      vi.stubGlobal('BroadcastChannel', FakeChannel);
+      const master = new FakeChannel('tt-global_1');
+      adapter = createWebAAdapter();
+      const worker = boot();
+      const original = message(11, '701');
+      worker.emit([
+        {
+          type: 'methodResponse',
+          messageId: 'history',
+          response: { messages: [original], chats: [{ id: '-10042' }] },
+        },
+      ]);
+      document.querySelector('[data-list-key]')!.innerHTML =
+        '<div class="Message" data-message-id="11"></div>';
+      worker.handler = (payload) => worker.reply(payload, { message: original });
+      const prepared = await adapter.discover()[0]!.resolve();
+      master.postMessage({
+        type: 'globalDiffUpdate',
+        diff: { messages: { byChatId: { __deleteAllChildren: true } } },
+      });
+      const changed =
+        change === 'deleted'
+          ? undefined
+          : change === 'media-id'
+            ? message(11, '702')
+            : change === 'size'
+              ? message(11, '701', 'audio', { size: 9 })
+              : change === 'filename'
+                ? message(11, '701', 'audio', { fileName: 'changed.mp3' })
+                : change === 'ttl'
+                  ? { ...original, content: { ...original.content, ttlSeconds: 2147483647 } }
+                  : { ...original, chatId: '-10043' };
+      worker.handler = (payload) => worker.reply(payload, { message: changed });
+      await expect(prepared.validate?.()).rejects.toMatchObject({ code: 'source_unavailable' });
+    },
+  );
+
+  it('does not overwrite an edit received while prepared-source refresh is in flight', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    const master = new FakeChannel('tt-global_1');
+    adapter = createWebAAdapter();
+    const worker = boot();
+    const original = message(11, '701');
+    const edited = message(11, '702');
+    worker.emit([
+      {
+        type: 'methodResponse',
+        messageId: 'history',
+        response: { messages: [original], chats: [{ id: '-10042' }] },
+      },
+    ]);
+    document.querySelector('[data-list-key]')!.innerHTML =
+      '<div class="Message" data-message-id="11"></div>';
+    worker.handler = (payload) => worker.reply(payload, { message: original });
+    const prepared = await adapter.discover()[0]!.resolve();
+    master.postMessage({
+      type: 'globalDiffUpdate',
+      diff: { messages: { byChatId: { __deleteAllChildren: true } } },
+    });
+    let requests = 0;
+    worker.handler = (payload) => {
+      if (++requests === 1) {
+        worker.emit([
+          {
+            type: 'updates',
+            updates: [
+              { '@type': 'updateMessage', chatId: '-10042', id: 11, isFull: true, message: edited },
+            ],
+          },
+        ]);
+        worker.reply(payload, { message: original });
+      } else worker.reply(payload, { message: edited });
+    };
+    await expect(prepared.validate?.()).rejects.toMatchObject({ code: 'source_unavailable' });
+    expect(requests).toBe(2);
+    expect(adapter.discover()[0]!.key).toContain(':702:');
+  });
+
+  it.each(['deleted', 'ttl'])(
+    'observes a %s update during refresh even when metadata is already absent',
+    async (change) => {
+      vi.stubGlobal('BroadcastChannel', FakeChannel);
+      const master = new FakeChannel('tt-global_1');
+      adapter = createWebAAdapter();
+      const worker = boot();
+      const original = message(11, '701');
+      worker.emit([
+        {
+          type: 'methodResponse',
+          messageId: 'history',
+          response: { messages: [original], chats: [{ id: '-10042' }] },
+        },
+      ]);
+      document.querySelector('[data-list-key]')!.innerHTML =
+        '<div class="Message" data-message-id="11"></div>';
+      worker.handler = (payload) => worker.reply(payload, { message: original });
+      const prepared = await adapter.discover()[0]!.resolve();
+      master.postMessage({
+        type: 'globalDiffUpdate',
+        diff: { messages: { byChatId: { __deleteAllChildren: true } } },
+      });
+      const changed =
+        change === 'deleted'
+          ? undefined
+          : { ...original, content: { ...original.content, ttlSeconds: 2147483647 } };
+      let requests = 0;
+      worker.handler = (payload) => {
+        if (++requests === 1) {
+          const update =
+            change === 'deleted'
+              ? { '@type': 'deleteMessages', chatId: '-10042', ids: [11] }
+              : {
+                  '@type': 'updateMessage',
+                  chatId: '-10042',
+                  id: 11,
+                  isFull: true,
+                  message: changed,
+                };
+          worker.emit([{ type: 'updates', updates: [update] }]);
+          worker.reply(payload, { message: original });
+        } else worker.reply(payload, { message: changed });
+      };
+      await expect(prepared.validate?.()).rejects.toMatchObject({ code: 'source_unavailable' });
+      expect(requests).toBe(2);
+    },
+  );
+
   it('keeps exact IDs independent of equal audio filenames and ignores text/previews', () => {
     const first = extractMessageMedia(message(11, '701'))!;
     const second = extractMessageMedia(message(12, '702'))!;

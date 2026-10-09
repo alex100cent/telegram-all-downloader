@@ -29,7 +29,7 @@ export interface ReadResult {
 export interface ResolvedMedia {
   info: MediaInfo;
   read(offset: number, length: number, signal: AbortSignal): Promise<ReadResult>;
-  validate?(): Promise<void>;
+  validate?(signal?: AbortSignal): Promise<void>;
   dispose?(): void;
 }
 

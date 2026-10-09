@@ -49,7 +49,7 @@ export async function transferToWriter(
     if (total !== undefined) validateSize(total);
     while (total === undefined || offset < total) {
       throwIfAborted(signal);
-      await source.validate?.();
+      await source.validate?.(signal);
       const length = total === undefined ? CHUNK_SIZE : Math.min(CHUNK_SIZE, total - offset);
       let result;
       for (let attempt = 0; ; attempt++) {

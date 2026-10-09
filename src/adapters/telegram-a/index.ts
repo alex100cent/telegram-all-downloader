@@ -20,6 +20,16 @@ const CHUNK_LIMIT = 512 * 1024;
 const METADATA_LIMIT = 1500;
 type Chat = { id: string; accessHash?: string };
 
+function hasMessageAttachment(element: HTMLElement): boolean {
+  return [
+    ...element.querySelectorAll('.media-inner, .Photo, .Video, .Audio, .Document, .Sticker'),
+  ].some(
+    (media) =>
+      media.closest('.Message[data-message-id]') === element &&
+      !media.closest('.WebPage, .EmbeddedMessage'),
+  );
+}
+
 export function createWebAAdapter(): MediaAdapter {
   return new WebAAdapter();
 }
@@ -111,14 +121,15 @@ class WebAAdapter implements MediaAdapter {
     if (!data || !peerId || !messageId) return;
     const key = `${peerId}:${messageId}`;
     const media = extractMessageMedia(value);
+    const changed = JSON.stringify(this.snapshots.get(key)) !== JSON.stringify(data);
     this.snapshots.set(key, data);
     this.trim(this.snapshots);
-    this.replaceMedia(key, media);
+    this.replaceMedia(key, media, changed);
   }
 
-  private replaceMedia(key: string, media?: MessageMedia): void {
+  private replaceMedia(key: string, media?: MessageMedia, invalidate = false): void {
     const previous = this.messages.get(key);
-    if (JSON.stringify(previous) !== JSON.stringify(media)) {
+    if (invalidate || JSON.stringify(previous) !== JSON.stringify(media)) {
       this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
       this.trim(this.revisions);
     }
@@ -129,10 +140,14 @@ class WebAAdapter implements MediaAdapter {
   }
 
   private forgetMessages(peerId?: string): void {
-    for (const key of new Set([...this.snapshots.keys(), ...this.messages.keys()])) {
+    for (const key of new Set([
+      ...this.snapshots.keys(),
+      ...this.messages.keys(),
+      ...this.revisions.keys(),
+    ])) {
       if (peerId && !key.startsWith(`${peerId}:`)) continue;
       this.snapshots.delete(key);
-      this.replaceMedia(key);
+      this.replaceMedia(key, undefined, true);
     }
   }
 
@@ -191,7 +206,7 @@ class WebAAdapter implements MediaAdapter {
         seen.add(key);
         if (removed(patch)) {
           this.snapshots.delete(key);
-          this.replaceMedia(key);
+          this.replaceMedia(key, undefined, true);
           continue;
         }
         const selected = messageMetadata(patch);
@@ -201,10 +216,14 @@ class WebAAdapter implements MediaAdapter {
       }
     }
     if (!isPatch) {
-      for (const key of new Set([...this.snapshots.keys(), ...this.messages.keys()])) {
+      for (const key of new Set([
+        ...this.snapshots.keys(),
+        ...this.messages.keys(),
+        ...this.revisions.keys(),
+      ])) {
         if (!seen.has(key)) {
           this.snapshots.delete(key);
-          this.replaceMedia(key);
+          this.replaceMedia(key, undefined, true);
         }
       }
     }
@@ -243,13 +262,13 @@ class WebAAdapter implements MediaAdapter {
       for (const messageId of data.ids) {
         const selectedId = id(messageId);
         if (!selectedId) continue;
-        for (const key of this.snapshots.keys()) {
-          if (
-            (peerId && key === `${peerId}:${selectedId}`) ||
-            (!peerId && key.endsWith(`:${selectedId}`))
-          ) {
+        const keys = peerId
+          ? [`${peerId}:${selectedId}`]
+          : new Set([...this.snapshots.keys(), ...this.messages.keys(), ...this.revisions.keys()]);
+        for (const key of keys) {
+          if (key.endsWith(`:${selectedId}`)) {
             this.snapshots.delete(key);
-            this.replaceMedia(key);
+            this.replaceMedia(key, undefined, true);
           }
         }
       }
@@ -272,7 +291,7 @@ class WebAAdapter implements MediaAdapter {
       if (
         !this.messages.has(`${peerId}:${messageId}`) &&
         !element.matches('[id^="album-media-message-"]') &&
-        !element.querySelector('.Photo, .Video, .Audio, .Document, .Sticker')
+        !hasMessageAttachment(element)
       )
         continue;
       const selected = this.messages.get(`${peerId}:${messageId}`);
@@ -344,23 +363,32 @@ class WebAAdapter implements MediaAdapter {
   ): Promise<ResolvedMedia> {
     const validate = async () => this.assertAccount(userId, generation);
     await validate();
-    let media = this.messages.get(`${peerId}:${messageId}`);
+    const key = `${peerId}:${messageId}`;
+    let media = this.messages.get(key);
     const chat = this.chats.get(peerId);
     if (chat && (!isChannel(peerId) || chat.accessHash)) {
-      const result = object(
-        await this.protocol.request('fetchMessage', [{ chat, messageId: Number(messageId) }]),
-      );
-      this.assertAccount(userId, generation);
-      const refreshed = extractMessageMedia(result?.message);
-      if (!refreshed || refreshed.peerId !== peerId || refreshed.messageId !== messageId) {
+      let refreshedSuccessfully = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const beforeRequest = this.revisions.get(key) ?? 0;
+        const result = object(
+          await this.protocol.request('fetchMessage', [{ chat, messageId: Number(messageId) }]),
+        );
+        this.assertAccount(userId, generation);
+        if ((this.revisions.get(key) ?? 0) !== beforeRequest) continue;
+        const refreshed = extractMessageMedia(result?.message);
+        if (!refreshed || refreshed.peerId !== peerId || refreshed.messageId !== messageId) break;
+        media = refreshed;
+        this.rememberMessage(result?.message);
+        refreshedSuccessfully = true;
+        break;
+      }
+      if (!refreshedSuccessfully) {
         throw new DownloadError(
           'source_unavailable',
           'This message no longer contains an available attachment.',
           true,
         );
       }
-      media = refreshed;
-      this.rememberMessage(result?.message);
     }
     if (!media)
       throw new DownloadError(
@@ -369,20 +397,38 @@ class WebAAdapter implements MediaAdapter {
         true,
       );
     const selected = media;
-    const revision = this.revisions.get(`${peerId}:${messageId}`) ?? 0;
-    const validateSelection = async () => {
+    const signature = JSON.stringify(selected);
+    let revision = this.revisions.get(key) ?? 0;
+    const validateSelection = async (signal?: AbortSignal) => {
+      if (signal) throwIfAborted(signal);
       await validate();
-      const current = this.messages.get(`${peerId}:${messageId}`);
-      if (
-        !current ||
-        current.mediaId !== selected.mediaId ||
-        (this.revisions.get(`${peerId}:${messageId}`) ?? 0) !== revision
-      ) {
-        throw new DownloadError(
-          'source_unavailable',
-          'The attachment changed or was removed. Select it again.',
-        );
+      const current = this.messages.get(key);
+      if (JSON.stringify(current) === signature && (this.revisions.get(key) ?? 0) === revision)
+        return;
+      if (chat && (!isChannel(peerId) || chat.accessHash)) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const beforeRequest = this.revisions.get(key) ?? 0;
+          const result = object(
+            await this.protocol.request(
+              'fetchMessage',
+              [{ chat, messageId: Number(messageId) }],
+              signal,
+            ),
+          );
+          this.assertAccount(userId, generation);
+          // A later update must not be overwritten by an earlier RPC response.
+          if ((this.revisions.get(key) ?? 0) !== beforeRequest) continue;
+          const refreshed = extractMessageMedia(result?.message);
+          if (JSON.stringify(refreshed) !== signature) break;
+          this.rememberMessage(result?.message);
+          revision = this.revisions.get(key) ?? 0;
+          return;
+        }
       }
+      throw new DownloadError(
+        'source_unavailable',
+        'The attachment changed or was removed. Select it again.',
+      );
     };
     const info = mediaInfo(selected, userId);
     const sourceUrl = new URL(info.sourceUrl!);
@@ -398,7 +444,7 @@ class WebAAdapter implements MediaAdapter {
     ): Promise<ReadResult> => {
       throwIfAborted(signal);
       this.assertAccount(userId, generation);
-      await validateSelection();
+      await validateSelection(signal);
       if (disposed) throw new DownloadError('source_unavailable');
       if (
         !Number.isSafeInteger(offset) ||
@@ -432,7 +478,7 @@ class WebAAdapter implements MediaAdapter {
         ),
       );
       throwIfAborted(signal);
-      await validateSelection();
+      await validateSelection(signal);
       if (disposed) throw new DownloadError('cancelled');
       if (!(response?.arrayBuffer instanceof ArrayBuffer)) {
         throw new DownloadError(

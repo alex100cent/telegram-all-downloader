@@ -92,6 +92,35 @@ describe('streaming transfer', () => {
     expect(sink.abort).toHaveBeenCalledOnce();
   });
 
+  it('cancels pending validation and aborts the writer without reading media', async () => {
+    const controller = new AbortController();
+    const sink = writer();
+    const validate = vi.fn<NonNullable<ResolvedMedia['validate']>>(
+      (signal) =>
+        new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new DownloadError('cancelled')), {
+            once: true,
+          });
+        }),
+    );
+    const read = vi.fn<ResolvedMedia['read']>();
+    const dispose = vi.fn();
+    const transfer = transferToWriter(
+      { info, validate, read, dispose },
+      sink,
+      controller.signal,
+      () => {},
+    );
+    expect(validate).toHaveBeenCalledWith(controller.signal);
+    controller.abort();
+    await expect(transfer).rejects.toMatchObject({ code: 'cancelled' });
+    expect(read).not.toHaveBeenCalled();
+    expect(sink.write).not.toHaveBeenCalled();
+    expect(sink.close).not.toHaveBeenCalled();
+    expect(sink.abort).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it('does not report success when closing the file fails', async () => {
     const sink = writer();
     sink.close = vi.fn().mockRejectedValue(new Error('disk full'));
