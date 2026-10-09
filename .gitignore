@@ -1,0 +1,15 @@
+node_modules/
+.output/
+.wxt/
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+.env
+.env.*
+!.env.example
+Telegram-Downloader/
+start.md
+CLAUDE.md
+artifacts/
+.test-profile/

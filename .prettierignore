@@ -1,0 +1,8 @@
+node_modules
+.output
+.wxt
+Telegram-Downloader
+start.md
+CLAUDE.md
+artifacts
+package-lock.json
