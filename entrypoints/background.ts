@@ -301,12 +301,20 @@ export default defineBackground(() => {
     });
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (
-      changeInfo.status === 'loading' ||
-      (changeInfo.url && !/^https:\/\/web\.telegram\.org\/(a|k)\//.test(changeInfo.url))
-    ) {
+    if (changeInfo.url && !/^https:\/\/web\.telegram\.org\/(a|k)\//.test(changeInfo.url)) {
       void sequence(async () => {
         await store.disconnect(tabId);
+        await schedule();
+      });
+    } else if (changeInfo.status === 'loading') {
+      void sequence(async () => {
+        const connection = (await store.connections()).find((entry) => entry.tabId === tabId);
+        if (!connection) return;
+        const reply = await command(connection, { type: 'probe' });
+        // Chrome reports loading for hash/pushState navigation too. An unknown
+        // reply also cannot revoke a live writer; a new hello replaces its session.
+        if (reply.ok || (await sourceTabExists(tabId))) return;
+        await store.disconnect(tabId, connection.sessionId);
         await schedule();
       });
     }

@@ -44,6 +44,11 @@ const record = (jobId: string, tabId = 1): JobRecord => ({
 });
 
 let messageListener: Listener;
+let tabUpdatedListener: (
+  tabId: number,
+  changeInfo: chrome.tabs.OnUpdatedInfo,
+  tab: chrome.tabs.Tab,
+) => void;
 let store: JobStore;
 let sendCommand: ReturnType<
   typeof vi.fn<(tabId: number, message: { command: Command }) => Promise<unknown>>
@@ -91,7 +96,11 @@ beforeEach(() => {
       update: vi.fn(async () => undefined),
       create: vi.fn(async () => undefined),
       onRemoved: { addListener: vi.fn() },
-      onUpdated: { addListener: vi.fn() },
+      onUpdated: {
+        addListener: (listener: typeof tabUpdatedListener) => {
+          tabUpdatedListener = listener;
+        },
+      },
     },
   });
 });
@@ -101,6 +110,71 @@ afterEach(() => {
 });
 
 describe('background coordinator', () => {
+  it('preserves the live session and writer when same-document navigation reports loading', async () => {
+    await start();
+    await send({
+      scope: 'tad-page',
+      sessionId: 'session-1',
+      payload: { type: 'hello', client: 'a', ready: true },
+    });
+    await store.enqueue(record('one'));
+    await store.claimNext();
+    sendCommand.mockResolvedValue({
+      ok: true,
+      jobs: [{ id: 'one', state: 'downloading', bytes: 0, total: 4 }],
+    });
+
+    const url = 'https://web.telegram.org/a/#-42';
+    tabUpdatedListener(1, { status: 'loading', url }, { id: 1, url } as chrome.tabs.Tab);
+    await send({ scope: 'tad-ui', type: 'list' }, uiSender);
+
+    expect(await store.connections()).toEqual([
+      { tabId: 1, sessionId: 'session-1', client: 'a', ready: true },
+    ]);
+    expect((await store.get('one'))?.state).toBe('downloading');
+    expect(
+      await send({
+        scope: 'tad-page',
+        sessionId: 'session-1',
+        payload: { type: 'progress', jobId: 'one', bytes: 4, total: 4, state: 'finalizing' },
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it('keeps an unknown writer after loading until a replacement page establishes its session', async () => {
+    await start();
+    await send({
+      scope: 'tad-page',
+      sessionId: 'session-1',
+      payload: { type: 'hello', client: 'a', ready: true },
+    });
+    await store.enqueue(record('one'));
+    await store.claimNext();
+    sendCommand.mockResolvedValue({ ok: false });
+
+    tabUpdatedListener(1, { status: 'loading' }, { id: 1 } as chrome.tabs.Tab);
+    await send({ scope: 'tad-ui', type: 'list' }, uiSender);
+    expect((await store.get('one'))?.state).toBe('downloading');
+    expect(await store.connections()).toHaveLength(1);
+
+    expect(
+      await send({
+        scope: 'tad-page',
+        sessionId: 'replacement-session',
+        payload: { type: 'hello', client: 'a', ready: true },
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await store.get('one'))?.state).toBe('interrupted');
+    expect(await store.connections()).toEqual([
+      { tabId: 1, sessionId: 'replacement-session', client: 'a', ready: true },
+    ]);
+
+    const url = 'https://example.com/';
+    tabUpdatedListener(1, { status: 'loading', url }, { id: 1, url } as chrome.tabs.Tab);
+    await send({ scope: 'tad-ui', type: 'list' }, uiSender);
+    expect(await store.connections()).toEqual([]);
+  });
+
   it('reconciles a completed writer when the service worker wakes without browser onStartup', async () => {
     await store.connect({ tabId: 1, sessionId: 'session-1', client: 'a', ready: true });
     await store.enqueue(record('one'));

@@ -2,6 +2,60 @@ import { test, expect } from './fixtures';
 import { clickDownload, expectedHash, openFixture, type FixtureFile } from './web-k-fixture';
 import { openAFixture } from './web-a-fixture';
 
+for (const navigation of ['pushState', 'hash'] as const) {
+  test(`Web A keeps its session after same-document ${navigation} navigation`, async ({
+    context,
+    popup,
+  }, testInfo) => {
+    const file: FixtureFile = { messageId: '503', size: 17_027, seed: 61 };
+    const page = await openAFixture(context, [file], { metaCsp: true });
+    await expect(popup.getByText('Connected', { exact: true })).toBeVisible();
+    await popup.evaluate(() => {
+      const updates: Array<{ tabId: number; change: chrome.tabs.OnUpdatedInfo; url?: string }> = [];
+      Object.assign(window, { __fixtureUpdates: updates });
+      chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+        if (tab.url?.startsWith('https://web.telegram.org/a/'))
+          updates.push({ tabId, change, url: tab.url });
+      });
+    });
+    await page.evaluate((method) => {
+      if (method === 'pushState') history.pushState({}, '', '#-42');
+      else location.hash = '#-42';
+    }, navigation);
+    await expect
+      .poll(() =>
+        popup.evaluate(() =>
+          (
+            window as unknown as {
+              __fixtureUpdates: Array<{ change: chrome.tabs.OnUpdatedInfo }>;
+            }
+          ).__fixtureUpdates.some(({ change }) => change.url?.endsWith('#-42')),
+        ),
+      )
+      .toBe(true);
+    await testInfo.attach('same-document-tab-updates', {
+      contentType: 'application/json',
+      body: JSON.stringify(
+        await popup.evaluate(
+          () => (window as unknown as { __fixtureUpdates: unknown }).__fixtureUpdates,
+        ),
+        null,
+        2,
+      ),
+    });
+    await page
+      .locator('.Message[data-message-id="503"]')
+      .getByRole('button', { name: 'Save file: Fixture-503.mp3', exact: true })
+      .click();
+    await expect(popup.locator('.job-card .job-status')).toContainText('Saved');
+    expect(await page.evaluate(() => window.__telegramFixture.hash('Fixture-503.mp3'))).toEqual({
+      size: file.size,
+      hash: expectedHash(file),
+    });
+    await expect(popup.getByText('Connected', { exact: true })).toBeVisible();
+  });
+}
+
 test('Web A connects and saves with a meta CSP that forbids JavaScript eval', async ({
   context,
   popup,
