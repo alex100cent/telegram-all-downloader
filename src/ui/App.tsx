@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BUILD } from '../build';
 import { DONATION_URL, REPOSITORY_URL } from '../config';
 import type { ErrorCode } from '../domain/errors';
-import { ACTIVE_STATES, DEFAULT_SETTINGS, type JobRecord, type Settings } from '../domain/jobs';
+import {
+  ACTIVE_STATES,
+  DEFAULT_SETTINGS,
+  type JobRecord,
+  type JobState,
+  type Settings,
+} from '../domain/jobs';
 import type { MediaKind, TelegramClient } from '../domain/media';
 import { errorMessages, messages, resolveLanguage, type Language } from '../i18n';
 import { detectBrowser, diagnosticsReport } from './diagnostics';
@@ -17,10 +23,12 @@ interface Snapshot {
 
 type Action =
   | { type: 'cancel' | 'retry' | 'open_source'; id: string }
+  | { type: 'batch_action'; action: 'cancel' | 'retry'; ids: string[] }
+  | { type: 'open_batch'; tabId: number }
   | { type: 'clear_history' }
   | { type: 'settings'; settings: Settings };
 type ListReply = ({ ok: true } & Snapshot) | { ok: false; error?: string };
-type ActionReply = { ok: boolean; error?: string };
+type ActionReply = { ok: boolean; error?: string; accepted?: number; rejected?: number };
 
 const ISSUE_URL = `${REPOSITORY_URL}/issues/new?template=bug_report.md`;
 
@@ -111,14 +119,19 @@ function JobCard({
   browser,
   disabled,
   onAction,
+  selection,
+  batchName,
 }: {
   job: JobRecord;
   language: Language;
   browser: string;
   disabled: boolean;
   onAction: (action: Action) => void;
+  selection?: { checked: boolean; disabled: boolean; toggle: () => void };
+  batchName?: string;
 }) {
   const t = messages[language];
+  const filename = job.destinationName ?? job.media.filename;
   const active = ACTIVE_STATES.includes(job.state);
   const canCancel = job.state === 'queued' || job.state === 'downloading';
   const canRetry = ['failed', 'cancelled', 'interrupted'].includes(job.state);
@@ -141,11 +154,21 @@ function JobCard({
   return (
     <li className={`job-card ${active ? 'job-active' : ''}`}>
       <div className="job-top">
+        {selection && (
+          <input
+            className="job-select"
+            type="checkbox"
+            aria-label={`${t.selectFile}: ${filename}`}
+            checked={selection.checked}
+            disabled={selection.disabled}
+            onChange={selection.toggle}
+          />
+        )}
         <div className={`media-icon media-${job.media.kind}`}>
           <Icon name={mediaIcons[job.media.kind]} />
         </div>
         <div className="job-heading">
-          <h3 title={job.media.filename}>{job.media.filename}</h3>
+          <h3 title={filename}>{filename}</h3>
           <div className="job-meta">
             <span>{t.kinds[job.media.kind]}</span>
             <span aria-hidden="true">·</span>
@@ -153,6 +176,7 @@ function JobCard({
               {active ? formatBytes(job.bytes, language) : formatTimestamp(job.updatedAt, language)}
             </span>
             {active && total !== undefined && <span>/ {formatBytes(total, language)}</span>}
+            {batchName && <span className="job-batch">{batchName}</span>}
           </div>
         </div>
         {canCancel && (
@@ -160,7 +184,7 @@ function JobCard({
             className="icon-button cancel-button"
             type="button"
             title={t.cancel}
-            aria-label={`${t.cancel}: ${job.media.filename}`}
+            aria-label={`${t.cancel}: ${filename}`}
             disabled={disabled}
             onClick={() => onAction({ type: 'cancel', id: job.id })}
           >
@@ -174,7 +198,7 @@ function JobCard({
           <div
             className={`progress-track ${percent === undefined ? 'indeterminate' : ''}`}
             role="progressbar"
-            aria-label={job.media.filename}
+            aria-label={filename}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
@@ -214,7 +238,7 @@ function JobCard({
               className="icon-button source-button"
               type="button"
               title={t.source}
-              aria-label={`${t.source}: ${job.media.filename}`}
+              aria-label={`${t.source}: ${filename}`}
               disabled={disabled}
               onClick={() => onAction({ type: 'open_source', id: job.id })}
             >
@@ -231,13 +255,350 @@ function JobCard({
   );
 }
 
-export function App() {
+function ManagerPanel({
+  jobs,
+  language,
+  browser,
+  pending,
+  onAction,
+}: {
+  jobs: JobRecord[];
+  language: Language;
+  browser: string;
+  pending: boolean;
+  onAction: (action: Action) => void;
+}) {
+  const t = messages[language];
+  const [search, setSearch] = useState('');
+  const [kind, setKind] = useState<MediaKind | ''>('');
+  const [state, setState] = useState<JobState | 'active' | ''>('');
+  const [batch, setBatch] = useState('');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const sorted = [...jobs].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+  const batches = new Map<string, { label: string; count: number }>();
+  for (const job of sorted) {
+    if (!job.batchId) continue;
+    const existing = batches.get(job.batchId);
+    if (existing) existing.count++;
+    else
+      batches.set(job.batchId, {
+        label: job.batchLabel ?? `${t.batch} ${batches.size + 1}`,
+        count: 1,
+      });
+  }
+  const batchJobs = sorted.filter(
+    (job) => !batch || (batch === 'individual' ? !job.batchId : job.batchId === batch.slice(6)),
+  );
+  const query = search.trim().toLocaleLowerCase(language);
+  const filtered = batchJobs.filter(
+    (job) =>
+      (!kind || job.media.kind === kind) &&
+      (!state || (state === 'active' ? ACTIVE_STATES.includes(job.state) : job.state === state)) &&
+      (!query ||
+        [job.destinationName, job.media.filename].some((name) =>
+          name?.toLocaleLowerCase(language).includes(query),
+        )),
+  );
+  const selected = filtered.filter((job) => selection.has(job.id));
+  const selectedIds = new Set(selected.map((job) => job.id));
+  const cancellable = selected.filter(
+    (job) => job.state === 'queued' || job.state === 'downloading',
+  );
+  const retryable = selected.filter((job) =>
+    ['failed', 'cancelled', 'interrupted'].includes(job.state),
+  );
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const pageSelected = visible.length > 0 && visible.every((job) => selectedIds.has(job.id));
+  const canSelectPage =
+    selected.length + visible.filter((job) => !selectedIds.has(job.id)).length <= 200;
+  const summary = [
+    {
+      key: 'active',
+      label: t.downloads,
+      count: batchJobs.filter((job) => ACTIVE_STATES.includes(job.state)).length,
+    },
+    ...(['completed', 'failed', 'cancelled', 'interrupted', 'skipped'] as const).map((status) => ({
+      key: status,
+      label: t.states[status],
+      count: batchJobs.filter((job) => job.state === status).length,
+    })),
+  ];
+
+  function resetSelection() {
+    setPage(0);
+    setSelection(new Set());
+  }
+  function resetFilters() {
+    setSearch('');
+    setKind('');
+    setState('');
+    setBatch('');
+    resetSelection();
+  }
+  function toggleJob(id: string) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else if (next.size < 200) next.add(id);
+    setSelection(next);
+  }
+  function togglePage() {
+    const next = new Set(selectedIds);
+    if (pageSelected) visible.forEach((job) => next.delete(job.id));
+    else if (canSelectPage) visible.forEach((job) => next.add(job.id));
+    setSelection(next);
+  }
+
+  return (
+    <section className="manager-panel" aria-labelledby="manager-title">
+      <div className="manager-heading">
+        <div>
+          <h2 id="manager-title">{t.manager}</h2>
+          <p>{t.managerHint}</p>
+        </div>
+        <button
+          className="text-button"
+          type="button"
+          disabled={pending || !jobs.some((job) => !ACTIVE_STATES.includes(job.state))}
+          onClick={() => onAction({ type: 'clear_history' })}
+        >
+          {t.clearHistory}
+        </button>
+      </div>
+      <div className="manager-filters">
+        <label className="search-filter" htmlFor="manager-search">
+          {t.searchFiles}
+          <input
+            id="manager-search"
+            type="search"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              resetSelection();
+            }}
+          />
+        </label>
+        <label htmlFor="manager-kind">
+          {t.mediaType}
+          <select
+            id="manager-kind"
+            value={kind}
+            onChange={(event) => {
+              setKind(event.target.value as MediaKind | '');
+              resetSelection();
+            }}
+          >
+            <option value="">{t.allKinds}</option>
+            {Object.entries(t.kinds).map(([value, label]) => (
+              <option value={value} key={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label htmlFor="manager-state">
+          {t.jobState}
+          <select
+            id="manager-state"
+            value={state}
+            onChange={(event) => {
+              setState(event.target.value as JobState | 'active' | '');
+              resetSelection();
+            }}
+          >
+            <option value="">{t.allStates}</option>
+            <option value="active">{t.downloads}</option>
+            {Object.entries(t.states).map(([value, label]) => (
+              <option value={value} key={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label htmlFor="manager-batch">
+          {t.batch}
+          <select
+            id="manager-batch"
+            value={batch}
+            onChange={(event) => {
+              setBatch(event.target.value);
+              resetSelection();
+            }}
+          >
+            <option value="">{t.allBatches}</option>
+            <option value="individual">{t.noBatch}</option>
+            {[...batches].map(([id, info]) => (
+              <option value={`batch:${id}`} key={id}>
+                {info.label} ({info.count})
+              </option>
+            ))}
+            {batch.startsWith('batch:') && !batches.has(batch.slice(6)) && (
+              <option value={batch}>{t.batch} (0)</option>
+            )}
+          </select>
+        </label>
+      </div>
+      <section className="batch-summary" aria-label={t.batchSummary}>
+        <dl>
+          {summary.map((item) => (
+            <div key={item.key} data-state={item.key}>
+              <dt>{item.label}</dt>
+              <dd>{item.count}</dd>
+            </div>
+          ))}
+        </dl>
+        <p>{t.batchSummaryHint}</p>
+      </section>
+      <div className="selection-toolbar">
+        <div className="selection-controls">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={pending || !visible.length || (!pageSelected && !canSelectPage)}
+            onClick={togglePage}
+          >
+            {pageSelected ? t.deselectPage : t.selectPage}
+          </button>
+          <span className="selection-count">
+            {t.selected}: {selected.length} / 200
+          </span>
+          {selected.length > 0 && (
+            <button
+              className="text-button"
+              type="button"
+              disabled={pending}
+              onClick={() => setSelection(new Set())}
+            >
+              {t.clearSelection}
+            </button>
+          )}
+        </div>
+        <div className="bulk-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            aria-label={t.cancelSelected}
+            disabled={pending || !cancellable.length}
+            onClick={() =>
+              onAction({
+                type: 'batch_action',
+                action: 'cancel',
+                ids: cancellable.map((job) => job.id),
+              })
+            }
+          >
+            {t.cancelSelected} <span>({cancellable.length})</span>
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            aria-label={t.retrySelected}
+            disabled={pending || !retryable.length}
+            onClick={() =>
+              onAction({
+                type: 'batch_action',
+                action: 'retry',
+                ids: retryable.map((job) => job.id),
+              })
+            }
+          >
+            {t.retrySelected} <span>({retryable.length})</span>
+          </button>
+        </div>
+        <p>
+          {t.selectionHint} {t.bulkHint}
+        </p>
+      </div>
+      <div className="manager-results-heading">
+        <span>
+          {t.matchingFiles}: {filtered.length}
+        </span>
+        {(search || kind || state || batch) && (
+          <button className="text-button" type="button" onClick={resetFilters}>
+            {t.resetFilters}
+          </button>
+        )}
+      </div>
+      {visible.length ? (
+        <ul className="job-list manager-jobs">
+          {visible.map((job) => (
+            <JobCard
+              key={job.id}
+              job={job}
+              language={language}
+              browser={browser}
+              disabled={pending}
+              onAction={onAction}
+              batchName={job.batchId ? batches.get(job.batchId)?.label : t.noBatch}
+              selection={{
+                checked: selectedIds.has(job.id),
+                disabled: pending || (!selectedIds.has(job.id) && selected.length >= 200),
+                toggle: () => toggleJob(job.id),
+              }}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="manager-empty">{t.noMatches}</p>
+      )}
+      <nav className="manager-pagination" aria-label={t.page}>
+        <label htmlFor="manager-page-size">
+          {t.perPage}
+          <select
+            id="manager-page-size"
+            value={pageSize}
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(0);
+            }}
+          >
+            {[25, 50, 100].map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>
+          {t.page} {currentPage + 1} / {pageCount}
+        </span>
+        <div>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={currentPage === 0}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            {t.previousPage}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={currentPage + 1 >= pageCount}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            {t.nextPage}
+          </button>
+        </div>
+      </nav>
+      {jobs.some((job) => ACTIVE_STATES.includes(job.state)) && (
+        <p className="section-hint">{t.keepTabOpen}</p>
+      )}
+    </section>
+  );
+}
+
+export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [unavailable, setUnavailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const [browser, setBrowser] = useState(navigator.userAgent);
+  const [selectedTab, setSelectedTab] = useState<number>();
   const mounted = useRef(false);
   const loading = useRef(false);
   const actionPending = useRef(false);
@@ -287,7 +648,8 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = language;
     document.documentElement.dataset.theme = settings.theme;
-  }, [language, settings.theme]);
+    document.documentElement.dataset.view = mode;
+  }, [language, settings.theme, mode]);
 
   async function execute(action: Action) {
     if (actionPending.current) return;
@@ -300,6 +662,21 @@ export function App() {
         ...action,
       });
       if (!mounted.current) return;
+      if (
+        action.type === 'batch_action' &&
+        typeof response?.accepted === 'number' &&
+        typeof response.rejected === 'number'
+      ) {
+        const nextStep =
+          response.accepted > 0 && action.action === 'retry' ? ` ${t.batchRetryNotice}` : '';
+        const rejectedHint = response.rejected > 0 ? ` ${t.batchActionRejectedHint}` : '';
+        setNotice({
+          text: `${t.batchActionAccepted}: ${response.accepted}. ${t.batchActionRejected}: ${response.rejected}.${nextStep}${rejectedHint}`,
+          error: response.rejected > 0,
+        });
+        await refresh();
+        return;
+      }
       if (!response?.ok) {
         if (action.type === 'cancel' && response?.error === 'finalizing') {
           setNotice({ text: t.states.finalizing, error: false });
@@ -316,6 +693,9 @@ export function App() {
             previous ? { ...previous, settings: action.settings } : previous,
           );
         if (action.type === 'retry') setNotice({ text: t.retryNotice, error: false });
+        if (action.type === 'open_batch') setNotice({ text: t.batchNotice, error: false });
+        if (action.type === 'batch_action' && action.action === 'retry')
+          setNotice({ text: t.batchRetryNotice, error: false });
         if (action.type === 'open_source') setNotice({ text: t.sourceNotice, error: false });
         await refresh();
       }
@@ -344,6 +724,10 @@ export function App() {
   ].sort();
   const hasConnection = connectedClients.length > 0;
   const hasJobs = active.length > 0 || history.length > 0;
+  const readyTabs = snapshot?.connections.filter((connection) => connection.ready) ?? [];
+  const batchTab =
+    readyTabs.find((connection) => connection.tabId === selectedTab)?.tabId ?? readyTabs[0]?.tabId;
+  const managerUrl = chrome.runtime.getURL('manager.html');
   const changeSettings = (patch: Partial<Settings>) => {
     void execute({ type: 'settings', settings: { ...settings, ...patch } });
   };
@@ -358,8 +742,9 @@ export function App() {
           <h1>
             Telegram <span>All Downloader</span>
           </h1>
-          <p>{t.tagline}</p>
+          <p>{mode === 'manager' ? t.manager : t.tagline}</p>
         </div>
+
         <button
           className={`icon-button settings-button ${settingsOpen ? 'selected' : ''}`}
           type="button"
@@ -388,6 +773,45 @@ export function App() {
               Web {client.toUpperCase()}
             </span>
           ))}
+        </div>
+
+        <div className="download-launcher">
+          {readyTabs.length > 1 && (
+            <label htmlFor="batch-tab">
+              {t.chooseTab}
+              <select
+                id="batch-tab"
+                value={batchTab}
+                onChange={(event) => setSelectedTab(Number(event.target.value))}
+              >
+                {readyTabs.map((connection) => (
+                  <option key={connection.tabId} value={connection.tabId}>
+                    Web {connection.client.toUpperCase()} · {t.browserTab} {connection.tabId}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="launcher-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={pending || batchTab === undefined}
+              onClick={() => {
+                if (batchTab !== undefined) void execute({ type: 'open_batch', tabId: batchTab });
+              }}
+            >
+              <Icon name="download" width="15" height="15" />
+              {t.chooseFiles}
+            </button>
+            {mode === 'popup' && (
+              <a className="manager-link" href={managerUrl} target="_blank" rel="noreferrer">
+                {t.manager}
+                <Icon name="external" width="12" height="12" />
+              </a>
+            )}
+          </div>
+          <p>{t.batchHint}</p>
         </div>
 
         {settingsOpen && (
@@ -494,7 +918,7 @@ export function App() {
           </p>
         )}
 
-        {snapshot && !hasJobs && (
+        {snapshot && !hasJobs && mode === 'popup' && (
           <section className="empty-state">
             <div className="empty-art" aria-hidden="true">
               <span className="empty-art-orbit" />
@@ -520,7 +944,17 @@ export function App() {
           </section>
         )}
 
-        {active.length > 0 && (
+        {snapshot && mode === 'manager' && (
+          <ManagerPanel
+            jobs={snapshot.jobs}
+            language={language}
+            browser={browser}
+            pending={pending}
+            onAction={(action) => void execute(action)}
+          />
+        )}
+
+        {mode === 'popup' && active.length > 0 && (
           <section className="jobs-section" aria-labelledby="active-title">
             <div className="section-heading">
               <h2 id="active-title">
@@ -534,7 +968,7 @@ export function App() {
               </span>
             </div>
             <ul className="job-list">
-              {active.map((job) => (
+              {active.slice(0, 5).map((job) => (
                 <JobCard
                   key={job.id}
                   job={job}
@@ -545,11 +979,16 @@ export function App() {
                 />
               ))}
             </ul>
+            {active.length > 5 && (
+              <a className="more-downloads" href={managerUrl} target="_blank" rel="noreferrer">
+                {t.popupMore} ({active.length})
+              </a>
+            )}
             <p className="section-hint">{t.keepTabOpen}</p>
           </section>
         )}
 
-        {history.length > 0 && (
+        {mode === 'popup' && history.length > 0 && (
           <section className="jobs-section history-section" aria-labelledby="history-title">
             <div className="section-heading">
               <h2 id="history-title">
@@ -566,7 +1005,7 @@ export function App() {
               </button>
             </div>
             <ul className="job-list">
-              {history.map((job) => (
+              {history.slice(0, 5).map((job) => (
                 <JobCard
                   key={job.id}
                   job={job}
@@ -577,6 +1016,11 @@ export function App() {
                 />
               ))}
             </ul>
+            {history.length > 5 && (
+              <a className="more-downloads" href={managerUrl} target="_blank" rel="noreferrer">
+                {t.popupMore} ({history.length})
+              </a>
+            )}
             {history.some((job) => ['failed', 'cancelled', 'interrupted'].includes(job.state)) && (
               <p className="section-hint">{t.retryHint}</p>
             )}

@@ -37,6 +37,8 @@ describe('popup', () => {
   let root: Root;
   let jobs: JobRecord[];
   let settings: Settings;
+  let connections: Array<{ tabId: number; client: 'a' | 'k'; ready: boolean }>;
+  let batchResult: { ok: boolean; accepted: number; rejected: number };
   const sendMessage =
     vi.fn<
       (message: {
@@ -44,6 +46,9 @@ describe('popup', () => {
         type: string;
         id?: string;
         settings?: Settings;
+        ids?: string[];
+        action?: 'cancel' | 'retry';
+        tabId?: number;
       }) => Promise<unknown>
     >();
 
@@ -51,14 +56,18 @@ describe('popup', () => {
     vi.useFakeTimers();
     jobs = [];
     settings = { ...DEFAULT_SETTINGS, language: 'en' };
+    connections = [{ tabId: 7, client: 'a', ready: true }];
+    batchResult = { ok: true, accepted: 1, rejected: 0 };
     sendMessage.mockReset();
     sendMessage.mockImplementation(async (message) => {
-      if (message.type === 'list')
-        return { ok: true, jobs, settings, connections: [{ tabId: 7, client: 'a', ready: true }] };
+      if (message.type === 'list') return { ok: true, jobs, settings, connections };
+      if (message.type === 'batch_action') return batchResult;
       if (message.type === 'settings' && message.settings) settings = message.settings;
       return { ok: true };
     });
-    vi.stubGlobal('chrome', { runtime: { sendMessage } });
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage, getURL: (path: string) => `chrome-extension://test/${path}` },
+    });
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     container = document.createElement('div');
     document.body.append(container);
@@ -72,8 +81,30 @@ describe('popup', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render() {
-    await act(async () => root.render(createElement(App)));
+  async function render(mode: 'popup' | 'manager' = 'popup') {
+    await act(async () => root.render(createElement(App, { mode })));
+  }
+
+  async function choose(id: string, value: string) {
+    const select = container.querySelector<HTMLSelectElement>(`#${id}`);
+    if (!select) throw new Error(`Select missing: ${id}`);
+    await act(async () => {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  async function searchFiles(value: string) {
+    const input = container.querySelector<HTMLInputElement>('#manager-search');
+    if (!input) throw new Error('Search missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  function filenames() {
+    return [...container.querySelectorAll('.manager-jobs h3')].map((node) => node.textContent);
   }
 
   async function click(label: string) {
@@ -256,5 +287,202 @@ describe('popup', () => {
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('links the popup to the full manager and bounds its recent cards', async () => {
+    jobs = Array.from({ length: 14 }, (_, index) =>
+      makeJob({ id: `job-${index}`, state: index < 7 ? 'downloading' : 'completed' }),
+    );
+    await render();
+    expect(container.querySelector<HTMLAnchorElement>('.manager-link')?.getAttribute('href')).toBe(
+      'chrome-extension://test/manager.html',
+    );
+    expect(container.querySelectorAll('.job-card')).toHaveLength(10);
+    expect(container.querySelectorAll('.more-downloads')).toHaveLength(2);
+  });
+
+  it('opens the batch selector in the chosen ready Telegram tab', async () => {
+    connections = [
+      { tabId: 7, client: 'a', ready: true },
+      { tabId: 8, client: 'k', ready: true },
+      { tabId: 9, client: 'a', ready: false },
+    ];
+    await render('manager');
+    expect(container.querySelectorAll('#batch-tab option')).toHaveLength(2);
+    await choose('batch-tab', '8');
+    await click('Choose files in Telegram');
+    expect(sendMessage).toHaveBeenCalledWith({ scope: 'tad-ui', type: 'open_batch', tabId: 8 });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'select attachments and choose a folder',
+    );
+    connections = [];
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    const launcher = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Choose files in Telegram',
+    );
+    expect(launcher?.disabled).toBe(true);
+  });
+
+  it('combines manager filename, kind, state and batch filters without hiding batch totals', async () => {
+    const audio = makeJob({
+      id: 'audio',
+      state: 'completed',
+      batchId: 'first',
+      batchLabel: 'Batch 1',
+      destinationName: 'renamed episode.mp3',
+    });
+    const photo = makeJob({
+      id: 'photo',
+      state: 'failed',
+      batchId: 'first',
+      batchLabel: 'Batch 1',
+      media: { ...audio.media, kind: 'photo', filename: 'sunset.jpg' },
+    });
+    jobs = [
+      audio,
+      photo,
+      makeJob({ id: 'other', state: 'skipped', batchId: 'second', batchLabel: 'Batch 2' }),
+      makeJob({ id: 'single', state: 'cancelled' }),
+    ];
+    await render('manager');
+    expect(document.documentElement.dataset.view).toBe('manager');
+    expect(filenames()).toHaveLength(4);
+    await choose('manager-batch', 'batch:first');
+    expect(filenames()).toHaveLength(2);
+    expect(container.querySelector('.batch-summary [data-state="failed"] dd')?.textContent).toBe(
+      '1',
+    );
+    await choose('manager-kind', 'audio');
+    await choose('manager-state', 'completed');
+    await searchFiles('RENAMED');
+    expect(filenames()).toEqual(['renamed episode.mp3']);
+    expect(container.querySelector('.batch-summary [data-state="failed"] dd')?.textContent).toBe(
+      '1',
+    );
+    await searchFiles('not present');
+    expect(filenames()).toHaveLength(0);
+    expect(container.textContent).toContain('No downloads match these filters.');
+    await click('Reset filters');
+    expect(filenames()).toHaveLength(4);
+    await choose('manager-state', 'skipped');
+    expect(filenames()).toEqual(['episode.mp3']);
+    expect(container.querySelector('.job-status')?.textContent).toBe('Skipped');
+    await choose('manager-state', '');
+    await choose('manager-batch', 'individual');
+    expect(filenames()).toHaveLength(1);
+  });
+
+  it('sends only eligible selected IDs for cancellation and retry, including partial rejection details', async () => {
+    const states = [
+      'queued',
+      'downloading',
+      'finalizing',
+      'completed',
+      'failed',
+      'cancelled',
+      'interrupted',
+      'skipped',
+    ] as const;
+    jobs = states.map((state) => makeJob({ id: state, state, batchId: 'batch-1' }));
+    await render('manager');
+    await click('Select page');
+    await click('Cancel selected');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'batch_action',
+      action: 'cancel',
+      ids: ['downloading', 'queued'],
+    });
+    batchResult = { ok: false, accepted: 2, rejected: 1 };
+    await click('Retry selected in Telegram');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'batch_action',
+      action: 'retry',
+      ids: ['cancelled', 'failed', 'interrupted'],
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Requests accepted: 2. Requests not accepted: 1.',
+    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'choose a folder to retry',
+    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'use Open source message on the file',
+    );
+    await choose('manager-state', 'failed');
+    expect(container.querySelector('.selection-count')?.textContent).toBe('Selected: 0 / 200');
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Retry selected in Telegram"]')
+        ?.disabled,
+    ).toBe(true);
+  });
+
+  it('bounds manager pages and selection to 200, then drops jobs removed by a snapshot', async () => {
+    jobs = Array.from({ length: 230 }, (_, index) =>
+      makeJob({ id: `job-${index.toString().padStart(3, '0')}`, state: 'failed' }),
+    );
+    await render('manager');
+    expect(container.querySelectorAll('.manager-jobs .job-card')).toHaveLength(25);
+    await choose('manager-page-size', '100');
+    await click('Select page');
+    await click('Next page');
+    await click('Select page');
+    await click('Next page');
+    expect(container.querySelectorAll('.manager-jobs .job-card')).toHaveLength(30);
+    expect(container.querySelector('.selection-count')?.textContent).toBe('Selected: 200 / 200');
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>('.job-select')].every(
+        (input) => input.disabled,
+      ),
+    ).toBe(true);
+    await click('Retry selected in Telegram');
+    const request = sendMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.type === 'batch_action');
+    expect(request?.ids).toHaveLength(200);
+    expect(new Set(request?.ids).size).toBe(200);
+    jobs = jobs.slice(200);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(container.querySelector('.selection-count')?.textContent).toBe('Selected: 0 / 200');
+    expect(container.querySelector('.manager-pagination')?.textContent).toContain('Page 1 / 1');
+  });
+
+  it('uses actual destination names and routes a batch card retry through the recoverable single-job command', async () => {
+    jobs = [makeJob({ state: 'failed', batchId: 'batch-1', destinationName: 'episode (2).mp3' })];
+    await render('manager');
+    expect(filenames()).toEqual(['episode (2).mp3']);
+    expect(container.querySelector('.job-select')?.getAttribute('aria-label')).toBe(
+      'Select: episode (2).mp3',
+    );
+    await click('Retry in Telegram');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'retry',
+      id: 'job-1',
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'choose a folder in the file selector',
+    );
+    expect(container.querySelector('.batch-summary')?.textContent).toContain(
+      'Counts from retained history',
+    );
+  });
+
+  it('localizes manager controls and skipped outcomes in Russian', async () => {
+    settings = { ...settings, language: 'ru', theme: 'dark' };
+    jobs = [makeJob({ state: 'skipped', destinationName: 'episode.mp3' })];
+    await render('manager');
+    expect(container.querySelector('#manager-title')?.textContent).toBe('Менеджер загрузок');
+    expect(container.querySelector('.job-status')?.textContent).toBe('Пропущено');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    await click('Выбрать страницу');
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Повторить выбранные в Telegram"]')
+        ?.disabled,
+    ).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Отменить выбранные"]')?.disabled,
+    ).toBe(true);
   });
 });

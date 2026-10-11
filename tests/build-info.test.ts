@@ -55,11 +55,48 @@ describe('build identification', () => {
   });
 
   it('ignores documentation and test changes that cannot reach the package', () => {
+    const clean = readBuildInfo(root, {});
     write('docs/notes.md', '# Changed\n');
+    write('docs/nested/design.md', '# Design\n');
     write('README.md', 'untracked\n');
     write('tests/new.test.ts', 'test\n');
     write('src/view.test.ts', 'test\n');
-    expect(readBuildInfo(root, {}).modified).toBe(false);
+    write('src/nested/view.test.ts', 'test\n');
+    expect(readBuildInfo(root, {})).toEqual(clean);
+  });
+
+  const publicAssets = [
+    'public/help.md',
+    'public/runtime.test.ts',
+    'public/docs/help.md',
+    'public/tests/fixture.test.ts',
+    'public/nested/LICENSE',
+  ];
+
+  it.each(publicAssets)('fingerprints the contents of untracked asset %s', (path) => {
+    const clean = readBuildInfo(root, {});
+    write(path, 'first asset contents\n');
+    const first = readBuildInfo(root, {});
+    expect(first.modified).toBe(true);
+    expect(first.id).not.toBe(clean.id);
+
+    write(path, 'second asset contents\n');
+    expect(readBuildInfo(root, {}).id).not.toBe(first.id);
+  });
+
+  it.each(publicAssets)('fingerprints tracked modifications to asset %s', (path) => {
+    write(path, 'original asset contents\n');
+    git('add', path);
+    git('commit', '-q', '-m', 'add public asset');
+    const clean = readBuildInfo(root, {});
+    expect(clean.modified).toBe(false);
+
+    write(path, 'modified asset contents\n');
+    const modified = readBuildInfo(root, {});
+    expect(modified.modified).toBe(true);
+    expect(modified.id).not.toBe(clean.id);
+    git('add', path);
+    expect(readBuildInfo(root, {})).toEqual(modified);
   });
 
   it('never labels modified build inputs as the clean commit', () => {

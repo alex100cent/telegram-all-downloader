@@ -73,12 +73,92 @@ interface Messages {
   copied: string;
   copyManually: string;
   diagnosticsPrivacy: string;
+  manager: string;
+  managerHint: string;
+  chooseFiles: string;
+  batchHint: string;
+  batchNotice: string;
+  batchRetryNotice: string;
+  batchActionAccepted: string;
+  batchActionRejected: string;
+  batchActionRejectedHint: string;
+  chooseTab: string;
+  browserTab: string;
+  searchFiles: string;
+  mediaType: string;
+  allKinds: string;
+  jobState: string;
+  allStates: string;
+  batch: string;
+  allBatches: string;
+  noBatch: string;
+  batchSummary: string;
+  batchSummaryHint: string;
+  selectFile: string;
+  selectPage: string;
+  deselectPage: string;
+  clearSelection: string;
+  selected: string;
+  selectionHint: string;
+  cancelSelected: string;
+  retrySelected: string;
+  bulkHint: string;
+  matchingFiles: string;
+  noMatches: string;
+  resetFilters: string;
+  perPage: string;
+  previousPage: string;
+  nextPage: string;
+  page: string;
+  popupMore: string;
   states: Record<JobState, string>;
   kinds: Record<MediaKind, string>;
 }
 
 export const messages: Record<Language, Messages> = {
   en: {
+    manager: 'Download manager',
+    managerHint: 'Find downloads, review batches and manage several files at once.',
+    chooseFiles: 'Choose files in Telegram',
+    batchHint: 'Open a chat, select its available attachments, then choose a folder in Telegram.',
+    batchNotice: 'Continue in Telegram: select attachments and choose a folder to start saving.',
+    batchRetryNotice:
+      'Continue in the opened Telegram tabs: review the selected files and choose a folder to retry.',
+    batchActionAccepted: 'Requests accepted',
+    batchActionRejected: 'Requests not accepted',
+    batchActionRejectedHint:
+      'Some files may have finished or their Telegram tabs may no longer be available. Check their status. To retry from a missing tab, use Open source message on the file and select it again in Telegram.',
+    chooseTab: 'Telegram tab',
+    browserTab: 'Tab',
+    searchFiles: 'Search file names',
+    mediaType: 'Media type',
+    allKinds: 'All types',
+    jobState: 'Status',
+    allStates: 'All statuses',
+    batch: 'Batch',
+    allBatches: 'All downloads',
+    noBatch: 'Individual downloads',
+    batchSummary: 'Results',
+    batchSummaryHint:
+      'Counts from retained history for the chosen batch, including files hidden by filters. Clearing or disabling history changes these totals.',
+    selectFile: 'Select',
+    selectPage: 'Select page',
+    deselectPage: 'Deselect page',
+    clearSelection: 'Clear selection',
+    selected: 'Selected',
+    selectionHint: 'Select up to 200 files across pages. Changing a filter clears the selection.',
+    cancelSelected: 'Cancel selected',
+    retrySelected: 'Retry selected in Telegram',
+    bulkHint:
+      'Cancel applies to queued or downloading files. Retry applies to failed, cancelled or interrupted files and requires choosing a folder in Telegram.',
+    matchingFiles: 'Matching files',
+    noMatches: 'No downloads match these filters.',
+    resetFilters: 'Reset filters',
+    perPage: 'Per page',
+    previousPage: 'Previous page',
+    nextPage: 'Next page',
+    page: 'Page',
+    popupMore: 'Show all downloads',
     tagline: 'Your files. On your device.',
     settings: 'Settings',
     closeSettings: 'Close settings',
@@ -99,8 +179,9 @@ export const messages: Record<Language, Messages> = {
     retry: 'Retry in Telegram',
     source: 'Open source message',
     retryHint:
-      'Retry opens Telegram. Click Save beside the attachment to choose a destination and start again.',
-    retryNotice: 'Continue in Telegram: click Save beside the attachment to start a new download.',
+      'Retry opens Telegram. Click Save beside the attachment, or choose a folder in the file selector, to start again.',
+    retryNotice:
+      'Continue in Telegram: choose a save location using Save beside the attachment, or choose a folder in the file selector.',
     sourceNotice: 'The source was opened in Telegram.',
     sourceUnavailable: 'Open the original chat in Telegram and find this attachment.',
     interruptedHint:
@@ -150,6 +231,7 @@ export const messages: Record<Language, Messages> = {
       failed: 'Not saved',
       cancelled: 'Cancelled',
       interrupted: 'Interrupted',
+      skipped: 'Skipped',
     },
     kinds: {
       photo: 'Photo',
@@ -163,6 +245,49 @@ export const messages: Record<Language, Messages> = {
     },
   },
   ru: {
+    manager: 'Менеджер загрузок',
+    managerHint: 'Находите загрузки, проверяйте результаты и управляйте несколькими файлами сразу.',
+    chooseFiles: 'Выбрать файлы в Telegram',
+    batchHint: 'Откройте чат, выберите доступные вложения, затем выберите папку в Telegram.',
+    batchNotice: 'Продолжите в Telegram: выберите вложения и папку для сохранения.',
+    batchRetryNotice:
+      'Продолжите в открытых вкладках Telegram: проверьте выбранные файлы и выберите папку для повтора.',
+    batchActionAccepted: 'Запросов принято',
+    batchActionRejected: 'Запросов отклонено',
+    batchActionRejectedHint:
+      'Часть файлов могла завершиться или их вкладки Telegram уже недоступны. Проверьте статусы. Для повтора из закрытой вкладки нажмите «Открыть исходное сообщение» у файла и выберите его заново в Telegram.',
+    chooseTab: 'Вкладка Telegram',
+    browserTab: 'Вкладка',
+    searchFiles: 'Поиск по имени файла',
+    mediaType: 'Тип медиа',
+    allKinds: 'Все типы',
+    jobState: 'Статус',
+    allStates: 'Все статусы',
+    batch: 'Группа',
+    allBatches: 'Все загрузки',
+    noBatch: 'Одиночные загрузки',
+    batchSummary: 'Результаты',
+    batchSummaryHint:
+      'Итоги выбранной группы по сохранённым записям, включая файлы, скрытые фильтрами. Очистка или отключение истории меняет эти итоги.',
+    selectFile: 'Выбрать',
+    selectPage: 'Выбрать страницу',
+    deselectPage: 'Снять выбор страницы',
+    clearSelection: 'Снять выбор',
+    selected: 'Выбрано',
+    selectionHint:
+      'Можно выбрать до 200 файлов на разных страницах. Изменение фильтра снимает выбор.',
+    cancelSelected: 'Отменить выбранные',
+    retrySelected: 'Повторить выбранные в Telegram',
+    bulkHint:
+      'Отмена доступна для ожидающих и скачиваемых файлов. Повтор — для неудавшихся, отменённых и прерванных; папку нужно выбрать в Telegram.',
+    matchingFiles: 'Найдено файлов',
+    noMatches: 'Нет загрузок с такими фильтрами.',
+    resetFilters: 'Сбросить фильтры',
+    perPage: 'На странице',
+    previousPage: 'Предыдущая страница',
+    nextPage: 'Следующая страница',
+    page: 'Страница',
+    popupMore: 'Показать все загрузки',
     tagline: 'Ваши файлы. На вашем устройстве.',
     settings: 'Настройки',
     closeSettings: 'Закрыть настройки',
@@ -183,9 +308,9 @@ export const messages: Record<Language, Messages> = {
     retry: 'Повторить в Telegram',
     source: 'Открыть исходное сообщение',
     retryHint:
-      'Откроется Telegram. Нажмите «Сохранить» рядом с вложением, чтобы выбрать место и начать заново.',
+      'Откроется Telegram. Нажмите «Сохранить» рядом с вложением или выберите папку в панели выбора файлов, чтобы начать заново.',
     retryNotice:
-      'Продолжите в Telegram: нажмите «Сохранить» рядом с вложением, чтобы начать новую загрузку.',
+      'Продолжите в Telegram: выберите место через кнопку «Сохранить» рядом с вложением или папку в панели выбора файлов.',
     sourceNotice: 'Исходное сообщение открыто в Telegram.',
     sourceUnavailable: 'Откройте исходный чат в Telegram и найдите это вложение.',
     interruptedHint:
@@ -235,6 +360,7 @@ export const messages: Record<Language, Messages> = {
       failed: 'Не сохранено',
       cancelled: 'Отменено',
       interrupted: 'Прервано',
+      skipped: 'Пропущено',
     },
     kinds: {
       photo: 'Фото',

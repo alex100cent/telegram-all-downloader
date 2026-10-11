@@ -69,7 +69,7 @@ export class JobStore {
   async update(
     id: string,
     sessionId: string,
-    patch: Partial<Pick<JobRecord, 'state' | 'bytes' | 'total' | 'error'>>,
+    patch: Partial<Pick<JobRecord, 'state' | 'bytes' | 'total' | 'error' | 'destinationName'>>,
   ): Promise<boolean> {
     const tx = (await this.database).transaction('jobs', 'readwrite');
     const job = await tx.store.get(id);
@@ -122,14 +122,12 @@ export class JobStore {
         (!sessionId || job.sessionId === sessionId) &&
         ACTIVE_STATES.includes(job.state)
       ) {
-        await tx
-          .objectStore('jobs')
-          .put({
-            ...job,
-            state: 'interrupted',
-            error: 'source_unavailable',
-            updatedAt: Date.now(),
-          });
+        await tx.objectStore('jobs').put({
+          ...job,
+          state: 'interrupted',
+          error: 'source_unavailable',
+          updatedAt: Date.now(),
+        });
       }
     }
     const connection = await tx.objectStore('connections').get(tabId);

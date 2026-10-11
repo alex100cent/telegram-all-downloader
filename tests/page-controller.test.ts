@@ -590,6 +590,167 @@ describe('page controller', () => {
     expect(document.querySelector('[data-tad-control]')).toBeNull();
   });
 
+  describe('folder batches', () => {
+    const directory = {
+      queryPermission: vi.fn(async () => 'granted'),
+      getFileHandle: vi.fn(async (_name: string, options?: { create?: boolean }) => {
+        if (!options?.create) throw new DOMException('Missing', 'NotFoundError');
+        return handle;
+      }),
+    };
+    const directoryPicker = vi.fn(async () => directory);
+
+    beforeEach(() => {
+      directoryPicker.mockReset().mockResolvedValue(directory);
+      directory.getFileHandle.mockClear();
+      vi.stubGlobal('showDirectoryPicker', directoryPicker);
+    });
+
+    function batchButton(text: string): HTMLButtonElement {
+      const found = [
+        ...document.querySelector('[data-tad-batch]')!.shadowRoot!.querySelectorAll('button'),
+      ].find((entry) => entry.textContent === text);
+      if (!found) throw new Error(`Missing batch button: ${text}`);
+      return found;
+    }
+    async function selectAll() {
+      await command({ type: 'open_batch' });
+      await click(batchButton('Select all shown'));
+    }
+
+    it('opens the folder picker only from a trusted synchronous click', async () => {
+      addCandidate('first');
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'), false);
+      expect(directoryPicker).not.toHaveBeenCalled();
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'isTrusted', { value: true });
+      batchButton('Choose folder and download').dispatchEvent(event);
+      expect(directoryPicker).toHaveBeenCalledWith({ mode: 'readwrite' });
+      expect(directory.getFileHandle).not.toHaveBeenCalled();
+      await flush();
+      expect(enqueuedId()).toBeTruthy();
+      expect(picker).not.toHaveBeenCalled();
+    });
+
+    it('rejects changed attachment identity before creating a destination file', async () => {
+      const first = makeSource('original');
+      const changed = makeSource('replacement');
+      const candidate = addCandidate('first', first);
+      vi.mocked(candidate.resolve).mockResolvedValueOnce(first).mockResolvedValue(changed);
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'));
+      await command({ type: 'start', jobId: enqueuedId() });
+      expect(changed.dispose).toHaveBeenCalledOnce();
+      expect(directory.getFileHandle).not.toHaveBeenCalled();
+      expect(bridge.request).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'finish', state: 'failed', error: 'source_unavailable' }),
+      );
+    });
+
+    it('preserves an open selection when retry refers to a missing previous job', async () => {
+      addCandidate('first');
+      await start();
+      await selectAll();
+      expect(await command({ type: 'retry_batch', jobIds: ['missing'] })).toEqual({
+        ok: false,
+        accepted: 0,
+        rejected: 1,
+      });
+      await click(batchButton('Choose folder and download'));
+      expect(directoryPicker).toHaveBeenCalledOnce();
+      expect(enqueuedId()).toBeTruthy();
+    });
+
+    it('keeps keyboard focus on the selected identity when filenames are equal', async () => {
+      addCandidate('first', makeSource('first'));
+      addCandidate('second', makeSource('second'));
+      await start();
+      await command({ type: 'open_batch' });
+      const shadow = document.querySelector('[data-tad-batch]')!.shadowRoot!;
+      const second = shadow.querySelectorAll('input')[1]!;
+      second.focus();
+      second.checked = true;
+      second.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(shadow.activeElement).toBe(shadow.querySelectorAll('input')[1]);
+      expect(shadow.querySelectorAll('input')[0]!.checked).toBe(false);
+      expect(shadow.querySelectorAll('input')[1]!.checked).toBe(true);
+    });
+
+    it('cancels a queued batch member without creating files or resolving media again', async () => {
+      const candidate = addCandidate('first');
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'));
+      await command({ type: 'cancel', jobId: enqueuedId() });
+      expect(candidate.resolve).toHaveBeenCalledOnce();
+      expect(directory.getFileHandle).not.toHaveBeenCalled();
+      expect(bridge.request).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'finish', state: 'cancelled' }),
+      );
+    });
+
+    it('releases a cancelled batch before pending metadata resolves and disposes its late source', async () => {
+      const first = makeSource('original');
+      const late = makeSource('original');
+      const pending = deferred<ResolvedMedia>();
+      const candidate = addCandidate('first', first);
+      vi.mocked(candidate.resolve).mockResolvedValueOnce(first).mockReturnValue(pending.promise);
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'));
+      const id = enqueuedId();
+      await command({ type: 'start', jobId: id });
+      expect(candidate.resolve).toHaveBeenCalledTimes(2);
+      await command({ type: 'cancel', jobId: id });
+      expect(bridge.request).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'finish', jobId: id, state: 'cancelled' }),
+      );
+      pending.resolve(late);
+      await flush();
+      expect(late.dispose).toHaveBeenCalledOnce();
+      expect(directory.getFileHandle).not.toHaveBeenCalled();
+      expect(late.read).not.toHaveBeenCalled();
+    });
+
+    it('does not enqueue a late directory result after disposal', async () => {
+      addCandidate('first');
+      const pending = deferred<typeof directory>();
+      directoryPicker.mockReturnValueOnce(pending.promise);
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'));
+      dispose?.();
+      pending.resolve(directory);
+      await flush();
+      expect(bridge.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'enqueue' }));
+      expect(directory.getFileHandle).not.toHaveBeenCalled();
+      expect(document.querySelector('[data-tad-batch]')).toBeNull();
+    });
+
+    it('preselects only failed or cancelled identities for retry without opening a picker', async () => {
+      addCandidate('first');
+      await start();
+      await selectAll();
+      await click(batchButton('Choose folder and download'));
+      const id = enqueuedId();
+      await command({ type: 'cancel', jobId: id });
+      await click(batchButton('Close'));
+      expect(await command({ type: 'retry_batch', jobIds: [id, 'missing'] })).toEqual({
+        ok: true,
+        accepted: 1,
+        rejected: 1,
+      });
+      const checked = document
+        .querySelector('[data-tad-batch]')!
+        .shadowRoot!.querySelectorAll('input:checked');
+      expect(checked).toHaveLength(1);
+      expect(directoryPicker).toHaveBeenCalledOnce();
+    });
+  });
+
   it('disposes late resolution and does not start queued work after page disposal', async () => {
     const pending = Array.from({ length: 4 }, () => deferred<ResolvedMedia>());
     pending.forEach((request, index) =>

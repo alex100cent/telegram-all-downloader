@@ -5,6 +5,7 @@ export interface FixtureFile {
   messageId: string;
   size: number;
   seed: number;
+  filename?: string;
 }
 export interface FixtureRead {
   id: string;
@@ -15,10 +16,15 @@ export interface FixtureRead {
 interface FixtureState {
   reads: FixtureRead[];
   picked: string[];
+  directoryPicks: string[];
+  directoryPickerActivations: boolean[];
   playCalls: number;
   hold(id: string, offset: number): void;
   release(id: string): void;
-  hash(filename: string): Promise<{ size: number; hash: string }>;
+  fail(id: string, offset: number): void;
+  allow(id: string): void;
+  hash(filename: string, folder?: string): Promise<{ size: number; hash: string }>;
+  files(folder?: string): Promise<string[]>;
 }
 
 declare global {
@@ -29,10 +35,13 @@ declare global {
 
 export function installFixture(files: FixtureFile[], client: 'a' | 'k' = 'k') {
   const held = new Map<string, number>();
+  const failing = new Map<string, number>();
   const waiting = new Map<string, Array<() => void>>();
   const state: FixtureState = {
     reads: [],
     picked: [],
+    directoryPicks: [],
+    directoryPickerActivations: [],
     playCalls: 0,
     hold(id, offset) {
       held.set(id, offset);
@@ -42,8 +51,15 @@ export function installFixture(files: FixtureFile[], client: 'a' | 'k' = 'k') {
       for (const resume of waiting.get(id) ?? []) resume();
       waiting.delete(id);
     },
-    async hash(filename) {
-      const directory = await navigator.storage.getDirectory();
+    fail(id, offset) {
+      failing.set(id, offset);
+    },
+    allow(id) {
+      failing.delete(id);
+    },
+    async hash(filename, folder) {
+      const root = await navigator.storage.getDirectory();
+      const directory = folder ? await root.getDirectoryHandle(folder) : root;
       const handle = await directory.getFileHandle(filename);
       const file = await handle.getFile();
       const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
@@ -51,6 +67,17 @@ export function installFixture(files: FixtureFile[], client: 'a' | 'k' = 'k') {
         size: file.size,
         hash: [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
       };
+    },
+    async files(folder) {
+      const root = await navigator.storage.getDirectory();
+      const directory = (
+        folder ? await root.getDirectoryHandle(folder) : root
+      ) as FileSystemDirectoryHandle & {
+        keys(): AsyncIterableIterator<string>;
+      };
+      const names: string[] = [];
+      for await (const name of directory.keys()) names.push(name);
+      return names.sort();
     },
   };
   window.__telegramFixture = state;
@@ -84,9 +111,12 @@ export function installFixture(files: FixtureFile[], client: 'a' | 'k' = 'k') {
             dc_id: 2,
             size: file.size,
             mime_type: 'application/octet-stream',
-            file_name: `Fixture-${file.messageId}.bin`,
+            file_name: file.filename ?? `Fixture-${file.messageId}.bin`,
             attributes: [
-              { _: 'documentAttributeFilename', file_name: `Fixture-${file.messageId}.bin` },
+              {
+                _: 'documentAttributeFilename',
+                file_name: file.filename ?? `Fixture-${file.messageId}.bin`,
+              },
             ],
           },
         },
@@ -126,6 +156,9 @@ export function installFixture(files: FixtureFile[], client: 'a' | 'k' = 'k') {
             waiting.set(file.messageId, list);
           });
         }
+        const failureOffset = failing.get(file.messageId);
+        if (failureOffset !== undefined && offset >= failureOffset)
+          throw new Error('Simulated fixture read failure');
         const size = Math.min(limit, Math.max(0, file.size - offset));
         const bytes = Uint8Array.from(
           { length: size },
@@ -149,7 +182,7 @@ export async function openFixture(context: BrowserContext, files: FixtureFile[])
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Own Telegram K integration fixture</title>
     <style>body{font:16px system-ui;margin:32px;background:#edf6fa}.bubble{position:relative;width:420px;height:120px;margin:16px;padding:20px;border:1px solid #46859d;border-radius:16px;background:white}</style>
     <script>(${installFixture.toString()})(${JSON.stringify(files)});</script></head><body><h1>Own test messages</h1><main class="bubbles">
-    ${files.map((file) => `<article class="bubble" data-peer-id="-77" data-mid="${file.messageId}"><p>Fixture-${file.messageId}.bin</p></article>`).join('')}
+    ${files.map((file) => `<article class="bubble" data-peer-id="-77" data-mid="${file.messageId}"><p>${file.filename ?? `Fixture-${file.messageId}.bin`}</p></article>`).join('')}
     </main><audio id="unrelated-player"></audio></body></html>`;
   await context.route('https://web.telegram.org/**', async (route) => {
     if (route.request().isNavigationRequest())

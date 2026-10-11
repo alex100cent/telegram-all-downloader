@@ -23,8 +23,13 @@ const LARGE: Record<string, number> = {
 };
 const USAGE = `Usage:
   node scripts/qa-samples.ts generate <dir> [--large=100m,1g,2g,4g] [--media] [--long-video]
-  node scripts/qa-samples.ts verify <manifest.json> <file-or-dir>... [--decode]
-  node scripts/qa-samples.ts memory <pid>[,<pid>...] [--seconds=N]`;
+  node scripts/qa-samples.ts verify <manifest.json> <file-or-dir>... [--expected=sample-file] [--decode]
+  node scripts/qa-samples.ts memory <pid>[,<pid>...] [--seconds=N]
+
+Verify exit codes: 0 = all files match expected bytes and SHA-256; 1 = failed checks;
+2 = inconclusive or invalid usage. --expected selects one manifest sample for every input.
+Unknown or transformed Telegram media remains inconclusive without an exact manifest match.
+Matching A/K copies alone does not prove that either copy is complete.`;
 
 function sha256(data: Uint8Array): string {
   return createHash('sha256').update(data).digest('hex');
@@ -274,6 +279,7 @@ function decode(path: string): string {
     ],
     { encoding: 'utf8' },
   );
+  if (result.error) return 'INCONCLUSIVE decode unavailable';
   return result.status === 0 && !result.stderr.trim() ? 'decoded' : 'FAIL decode';
 }
 
@@ -282,7 +288,12 @@ async function files(paths: string[]): Promise<string[]> {
   for (const path of paths) {
     if ((await stat(path)).isDirectory()) {
       for (const entry of (await readdir(path)).sort())
-        if (!entry.startsWith('.') && !entry.endsWith('.crswap') && entry !== 'manifest.json')
+        if (
+          !entry.startsWith('.') &&
+          !entry.endsWith('.crswap') &&
+          entry !== 'manifest.json' &&
+          (await stat(join(path, entry))).isFile()
+        )
           result.push(join(path, entry));
     } else result.push(path);
   }
@@ -291,36 +302,68 @@ async function files(paths: string[]): Promise<string[]> {
 
 async function verify(manifestPath: string, paths: string[], options: Map<string, string>) {
   const { samples } = JSON.parse(await readFile(manifestPath, 'utf8')) as { samples: Sample[] };
+  const expectedName = options.get('expected');
+  const explicitExpected = samples.find((sample) => sample.file === expectedName);
+  if (options.has('expected') && !explicitExpected) {
+    console.error(`Unknown expected sample: ${expectedName}`);
+    process.exitCode = 2;
+    return;
+  }
+  const selected = await files(paths);
+  if (!selected.length) {
+    console.error('INCONCLUSIVE: no files selected');
+    process.exitCode = 2;
+    return;
+  }
   const groups = new Map<string, string[]>();
   let failed = false;
-  for (const path of await files(paths)) {
+  let inconclusive = false;
+  for (const path of selected) {
     const { bytes, sha256: hash, head } = await hashFile(path);
     let type = detect(head);
+    const expected = explicitExpected ?? samples.find((entry) => entry.file === basename(path));
+    const sample =
+      expected ?? samples.find((entry) => entry.sha256 === hash && entry.bytes === bytes);
     const checks: string[] = [];
-    if (type === 'gzip' && bytes < 16 * MiB) checks.push(tgs(path, await readFile(path)));
+    if (
+      type === 'gzip' &&
+      bytes < 16 * MiB &&
+      (basename(path).toLowerCase().endsWith('.tgs') || sample?.file.toLowerCase().endsWith('.tgs'))
+    )
+      checks.push(tgs(path, await readFile(path)));
     if (
       options.has('decode') &&
       /^(mpeg-audio|ogg|flac|gif|webm|iso-bmff|jpeg|png|webp)/.test(type)
     )
       checks.push(decode(path));
-    const sample = samples.find((entry) => entry.sha256 === hash);
-    const sized = samples.find((entry) => entry.bytes === bytes);
-    let result: string;
-    if (sample) result = `identical to ${sample.category} sample`;
-    else if (sized) result = `FAIL same size as ${sized.category} sample, different SHA-256`;
-    else result = 'not in manifest; compare A/K copies by SHA-256';
-    if (result.startsWith('FAIL') || checks.some((check) => check.startsWith('FAIL')))
-      failed = true;
+    const mismatch = sample && (sample.bytes !== bytes || sample.sha256 !== hash);
+    const invalid = mismatch || checks.some((check) => check.startsWith('FAIL'));
+    const unknown = !sample || checks.some((check) => check.startsWith('INCONCLUSIVE'));
+    const verdict = invalid ? 'FAIL' : unknown ? 'INCONCLUSIVE' : 'PASS';
+    const result = !sample
+      ? 'no expected sample or exact manifest match; transformed media needs a reference'
+      : mismatch
+        ? `expected ${sample.file}: ${sample.bytes} bytes and SHA-256 ${sample.sha256}`
+        : `identical to ${sample.file} (${sample.category})`;
+    if (invalid) failed = true;
+    else if (unknown) inconclusive = true;
     if (type === 'unknown' && sample) type = 'opaque';
     groups.set(hash, [...(groups.get(hash) ?? []), basename(path)]);
     console.log(
-      [basename(path), String(bytes), hash.slice(0, 16), type, result, ...checks].join(' | '),
+      [
+        basename(path),
+        String(bytes),
+        hash.slice(0, 16),
+        type,
+        `${verdict} ${result}`,
+        ...checks,
+      ].join(' | '),
     );
   }
   for (const [hash, names] of groups)
     if (names.length > 1)
       console.log(`identical copies (${hash.slice(0, 16)}): ${names.join(', ')}`);
-  process.exitCode = failed ? 1 : 0;
+  process.exitCode = failed ? 1 : inconclusive ? 2 : 0;
 }
 
 function memory(pids: string[], options: Map<string, string>): void {

@@ -10,10 +10,17 @@ import {
   type ResolvedMedia,
 } from '../domain/media';
 import { transferToWriter } from '../downloads/stream';
+import {
+  directoryFilename,
+  resolveDirectoryDestination,
+  type DirectoryOptions,
+} from '../downloads/destination';
 import { safeFilename } from '../naming';
+import { createBatchPanel, type BatchEntry } from './batch-panel';
 
 interface FilePickerWindow extends Window {
   showSaveFilePicker?: (options: { suggestedName: string }) => Promise<FileSystemFileHandle>;
+  showDirectoryPicker?: (options: { mode: 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
 }
 interface Control {
   candidate: MediaCandidate;
@@ -35,8 +42,11 @@ interface PageJob {
   info: MediaInfo;
   source?: ResolvedMedia;
   handle?: FileSystemFileHandle;
+  directory?: FileSystemDirectoryHandle;
+  destinationOptions?: DirectoryOptions;
+  destinationName?: string;
   controller: AbortController;
-  state: 'queued' | 'downloading' | 'finalizing' | 'completed' | 'failed' | 'cancelled';
+  state: 'queued' | 'downloading' | 'finalizing' | 'completed' | 'failed' | 'cancelled' | 'skipped';
   bytes: number;
   total?: number;
   error?: ErrorCode;
@@ -113,6 +123,10 @@ export function startPageController(adapter: MediaAdapter): () => void {
   const preparationQueue: Array<{ control: Control; resolve: (prepared: boolean) => void }> = [];
   let preparationsRunning = 0;
   let notice: HTMLElement | undefined;
+  let launcher: HTMLElement | undefined;
+  let batchBusy = false;
+  const batchCandidates = new Map<string, { candidate: MediaCandidate; info: MediaInfo }>();
+  const albumIds = new WeakMap<Element, string>();
   const words = () =>
     copy[
       settings.language === 'auto'
@@ -121,6 +135,180 @@ export function startPageController(adapter: MediaAdapter): () => void {
           : 'en'
         : settings.language
     ];
+
+  const batchPanel = createBatchPanel({
+    settings,
+    entries: batchEntries,
+    download: selectBatchDestination,
+  });
+  function batchEntries(): BatchEntry[] {
+    scan();
+    batchCandidates.clear();
+    const entries = new Map<string, BatchEntry>();
+    for (const control of controls.values()) {
+      const info =
+        control.source?.info ?? (control.jobId ? jobs.get(control.jobId)?.info : undefined);
+      if (!info || entries.size >= 200) continue;
+      const key = mediaKey(info.identity);
+      if (entries.has(key)) continue;
+      const parent = control.candidate.anchor.closest('.Message,.bubble');
+      if (parent && !albumIds.has(parent)) albumIds.set(parent, crypto.randomUUID());
+      batchCandidates.set(key, { candidate: control.candidate, info });
+      entries.set(key, {
+        key,
+        info,
+        album: parent ? albumIds.get(parent) : undefined,
+        disabled: !!activeJob(key) || selections.has(key),
+      });
+    }
+    return [...entries.values()];
+  }
+  function openBatch(retries?: PageJob[]): number {
+    if (disposed || batchBusy) return 0;
+    if (!retries) {
+      batchPanel.open();
+      return 1;
+    }
+    const retryCandidates = new Map<string, { candidate: MediaCandidate; info: MediaInfo }>();
+    const entries: BatchEntry[] = [];
+    for (const job of retries) {
+      if (activeJob(job.key) || retryCandidates.has(job.key)) continue;
+      retryCandidates.set(job.key, { candidate: job.candidate, info: job.info });
+      entries.push({ key: job.key, info: job.info });
+    }
+    if (entries.length) {
+      batchCandidates.clear();
+      for (const [key, entry] of retryCandidates) batchCandidates.set(key, entry);
+      batchPanel.open(
+        entries,
+        entries.map((entry) => entry.key),
+      );
+    }
+    return entries.length;
+  }
+  function selectBatchDestination(
+    entries: BatchEntry[],
+    options: Omit<DirectoryOptions, 'index'>,
+    event: MouseEvent,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.isTrusted || disposed || batchBusy || !entries.length) return;
+    if (!connected) {
+      showNotice(words().reconnect);
+      void handshake();
+      return;
+    }
+    const picker = (window as FilePickerWindow).showDirectoryPicker;
+    if (!picker) {
+      showNotice(words().noPicker);
+      return;
+    }
+    const selected = entries
+      .map((entry) => ({ entry, captured: batchCandidates.get(entry.key) }))
+      .filter(
+        (
+          item,
+        ): item is {
+          entry: BatchEntry;
+          captured: { candidate: MediaCandidate; info: MediaInfo };
+        } => !!item.captured && !activeJob(item.entry.key) && !selections.has(item.entry.key),
+      );
+    if (!selected.length) {
+      showNotice(words().duplicate);
+      return;
+    }
+    let destination: Promise<FileSystemDirectoryHandle>;
+    try {
+      destination = picker.call(window, { mode: 'readwrite' });
+    } catch (error) {
+      if (errorCode(error) !== 'cancelled') showNotice(failureNotice('disk_error'));
+      return;
+    }
+    batchBusy = true;
+    batchPanel.setBusy(true);
+    for (const { entry } of selected) selections.add(entry.key);
+    const batchId = crypto.randomUUID();
+    const language = words() === copy.ru ? 'ru' : 'en';
+    const batchLabel = `${language === 'ru' ? 'Пакет' : 'Batch'} · ${new Date().toLocaleString(language)}`;
+    let accepted = 0;
+    let rejected = entries.length - selected.length;
+    void destination
+      .then(async (directory) => {
+        for (let index = 0; index < selected.length; index++) {
+          if (disposed) break;
+          const { entry, captured } = selected[index]!;
+          if (
+            activeJob(entry.key) ||
+            [...jobs.values()].filter((job) =>
+              ['queued', 'downloading', 'finalizing'].includes(job.state),
+            ).length >= 200
+          ) {
+            rejected++;
+            continue;
+          }
+          const id = crypto.randomUUID();
+          const destinationOptions = { ...options, index: index + 1 };
+          const job: PageJob = {
+            id,
+            key: entry.key,
+            candidate: captured.candidate,
+            info: captured.info,
+            directory,
+            destinationOptions,
+            controller: new AbortController(),
+            state: 'queued',
+            bytes: 0,
+            total: captured.info.byteSize,
+          };
+          jobs.set(id, job);
+          for (const control of controls.values()) {
+            const info =
+              control.source?.info ?? (control.jobId ? jobs.get(control.jobId)?.info : undefined);
+            if (info && mediaKey(info.identity) === entry.key) {
+              releaseControlSource(control);
+              control.jobId = id;
+              paint(control);
+            }
+          }
+          try {
+            const reply = await bridge.request({
+              type: 'enqueue',
+              jobId: id,
+              media: {
+                ...captured.info,
+                filename: directoryFilename(captured.info, destinationOptions),
+              },
+              batchId,
+              batchLabel,
+            });
+            if (reply.ok !== true) throw new DownloadError('source_unavailable');
+            accepted++;
+          } catch {
+            rejected++;
+            if (job.state === 'queued') {
+              job.state = 'failed';
+              job.error = 'source_unavailable';
+              await finish(job);
+            }
+          }
+        }
+        if (!disposed)
+          batchPanel.showResult(
+            language === 'ru'
+              ? `Добавлено в очередь: ${accepted}. Не добавлено: ${rejected}. Результаты доступны в менеджере загрузок.`
+              : `Added to queue: ${accepted}. Not added: ${rejected}. See the download manager for results.`,
+          );
+      })
+      .catch((error: unknown) => {
+        if (errorCode(error) !== 'cancelled') showNotice(failureNotice('disk_error'));
+      })
+      .finally(() => {
+        for (const { entry } of selected) selections.delete(entry.key);
+        batchBusy = false;
+        batchPanel.setBusy(false);
+      });
+  }
 
   function showNotice(text: string, action?: { label: string; run: (event: MouseEvent) => void }) {
     if (disposed) return;
@@ -212,6 +400,8 @@ export function startPageController(adapter: MediaAdapter): () => void {
       connected = reply.ok === true;
       const parsed = settingsSchema.safeParse(reply.settings, { jitless: true });
       if (parsed.success) settings = parsed.data;
+      batchPanel.updateSettings(settings);
+      paintLauncher();
       if (!disposed) for (const control of controls.values()) paint(control);
     } catch {
       connected = false;
@@ -233,6 +423,41 @@ export function startPageController(adapter: MediaAdapter): () => void {
         }
       },
     };
+  }
+  function resolveJobSource(job: PageJob): Promise<ResolvedMedia> {
+    const signal = job.controller.signal;
+    if (signal.aborted) return Promise.reject(new DownloadError('cancelled'));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const stop = () => {
+        settled = true;
+        signal.removeEventListener('abort', stop);
+        reject(new DownloadError('cancelled'));
+      };
+      signal.addEventListener('abort', stop, { once: true });
+      void Promise.resolve()
+        .then(() => {
+          if (signal.aborted) throw new DownloadError('cancelled');
+          return job.candidate.resolve();
+        })
+        .then((value) => {
+          const source = ownedSource(value);
+          if (settled || signal.aborted) {
+            source.dispose?.();
+            return;
+          }
+          settled = true;
+          signal.removeEventListener('abort', stop);
+          resolve(source);
+        })
+        .catch((error: unknown) => {
+          signal.removeEventListener('abort', stop);
+          if (!settled) {
+            settled = true;
+            reject(error);
+          }
+        });
+    });
   }
   function liveControl(control: Control): boolean {
     return !disposed && control.host.isConnected && controls.get(control.candidate.key) === control;
@@ -305,6 +530,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
     if (job.finishing) return job.finishing;
     job.source?.dispose?.();
     job.handle = undefined;
+    job.directory = undefined;
     job.source = undefined;
     paintJob(job);
     job.finishing = (async () => {
@@ -314,7 +540,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
             type: 'finish',
             jobId: job.id,
             bytes: job.bytes,
-            state: job.state as 'completed' | 'failed' | 'cancelled',
+            state: job.state as 'completed' | 'failed' | 'cancelled' | 'skipped',
             error: job.error,
           });
       } catch {
@@ -332,7 +558,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
     return job.finishing;
   }
   async function run(job: PageJob) {
-    if (job.state !== 'queued' || !job.source || !job.handle) return;
+    if (job.state !== 'queued' || (!job.directory && (!job.source || !job.handle))) return;
     job.state = 'downloading';
     paintJob(job);
     try {
@@ -344,11 +570,48 @@ export function startPageController(adapter: MediaAdapter): () => void {
         state: 'downloading',
       });
       if (grant.ok !== true) throw new DownloadError('source_unavailable');
+      if (!job.source) {
+        const source = await resolveJobSource(job);
+        if (
+          mediaKey(source.info.identity) !== job.key ||
+          source.info.mimeType !== job.info.mimeType ||
+          (job.info.byteSize !== undefined && source.info.byteSize !== job.info.byteSize)
+        ) {
+          source.dispose?.();
+          throw new DownloadError('source_unavailable');
+        }
+        job.source = source;
+      }
       await job.source.validate?.(job.controller.signal);
+      if (job.controller.signal.aborted) throw new DownloadError('cancelled');
+      if (job.directory && job.destinationOptions) {
+        const destination = await resolveDirectoryDestination(
+          job.directory,
+          job.info,
+          job.destinationOptions,
+          job.controller.signal,
+        );
+        if (!destination) {
+          job.state = 'skipped';
+          await finish(job);
+          return;
+        }
+        job.handle = destination.handle;
+        job.destinationName = destination.filename;
+        const reply = await bridge.request({
+          type: 'progress',
+          jobId: job.id,
+          bytes: 0,
+          total: job.total,
+          state: 'downloading',
+          destinationName: destination.filename,
+        });
+        if (reply.ok !== true) throw new DownloadError('source_unavailable');
+      }
       if (job.controller.signal.aborted) throw new DownloadError('cancelled');
       let writable: FileSystemWritableFileStream;
       try {
-        writable = await job.handle.createWritable();
+        writable = await job.handle!.createWritable();
       } catch {
         throw new DownloadError('disk_error');
       }
@@ -552,7 +815,7 @@ export function startPageController(adapter: MediaAdapter): () => void {
         return;
       }
       const old = control.jobId && jobs.get(control.jobId);
-      if (old && ['failed', 'completed', 'cancelled'].includes(old.state)) {
+      if (old && ['failed', 'completed', 'cancelled', 'skipped'].includes(old.state)) {
         event.preventDefault();
         event.stopPropagation();
         void prepareAgain(control);
@@ -589,21 +852,36 @@ export function startPageController(adapter: MediaAdapter): () => void {
   function scheduleScan() {
     if (!scanTimer && !disposed) scanTimer = setTimeout(scan, 180);
   }
+  function paintLauncher() {
+    const button = launcher?.shadowRoot?.querySelector('button');
+    if (button) button.textContent = words() === copy.ru ? 'Скачать несколько' : 'Download several';
+  }
   bridge.handleCommands(async (command): Promise<CommandReply> => {
     if (disposed) return { ok: false };
+    if (command.type === 'open_batch') return { ok: !!openBatch() };
+    if (command.type === 'retry_batch') {
+      const retries = command.jobIds
+        .map((id) => jobs.get(id))
+        .filter((job): job is PageJob => !!job && ['failed', 'cancelled'].includes(job.state));
+      const accepted = openBatch(retries);
+      return { ok: accepted > 0, accepted, rejected: command.jobIds.length - accepted };
+    }
     if (command.type === 'probe')
       return {
         ok: true,
-        jobs: [...jobs.values()].map(({ id, state, bytes, total, error }) => ({
+        jobs: [...jobs.values()].map(({ id, state, bytes, total, error, destinationName }) => ({
           id,
           state,
           bytes,
           total,
           error,
+          destinationName,
         })),
       };
     if (command.type === 'settings') {
       settings = command.settings;
+      batchPanel.updateSettings(settings);
+      paintLauncher();
       for (const control of controls.values()) paint(control);
       return { ok: true };
     }
@@ -629,11 +907,31 @@ export function startPageController(adapter: MediaAdapter): () => void {
   });
   const initialize = () => {
     if (disposed || observer) return;
+    launcher = document.createElement('div');
+    launcher.dataset.tadBatchLauncher = 'true';
+    launcher.style.cssText = 'position:fixed;bottom:12px;left:12px;z-index:2147483640';
+    const shadow = launcher.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent =
+      'button{font:600 13px system-ui;border:1px solid #70cddd;border-radius:24px;padding:10px 16px;background:#103947;color:white;cursor:pointer;box-shadow:0 2px 12px #0003}button:focus-visible{outline:3px solid #51cee5;outline-offset:3px}';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.onclick = (event) => {
+      if (event.isTrusted) openBatch();
+    };
+    shadow.append(style, button);
+    document.documentElement.append(launcher);
+    paintLauncher();
     observer = new MutationObserver((mutations) => {
       const relevant = mutations.some((mutation) => {
         const element =
           mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
-        if (element?.closest('[data-tad-control],[data-tad-notice]')) return false;
+        if (
+          element?.closest(
+            '[data-tad-control],[data-tad-notice],[data-tad-batch],[data-tad-batch-launcher]',
+          )
+        )
+          return false;
         if (element?.closest('#MiddleColumn,.bubbles,#MediaViewer,.media-viewer-whole'))
           return true;
         return [...mutation.addedNodes].some(
@@ -678,6 +976,9 @@ export function startPageController(adapter: MediaAdapter): () => void {
     }
     controls.clear();
     notice?.remove();
+    launcher?.remove();
+    batchPanel.dispose();
+    batchCandidates.clear();
     for (const source of pendingSources) source.dispose?.();
     pendingSources.clear();
     for (const job of jobs.values()) {

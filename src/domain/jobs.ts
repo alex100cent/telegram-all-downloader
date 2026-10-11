@@ -2,7 +2,14 @@ import type { ErrorCode } from './errors';
 import type { MediaInfo } from './media';
 
 export type JobState =
-  'queued' | 'downloading' | 'finalizing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  | 'queued'
+  | 'downloading'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+  | 'skipped';
 export interface JobRecord {
   id: string;
   key: string;
@@ -16,6 +23,9 @@ export interface JobRecord {
   tabId: number;
   sessionId: string;
   attempt: number;
+  batchId?: string;
+  batchLabel?: string;
+  destinationName?: string;
 }
 export interface Settings {
   language: 'auto' | 'ru' | 'en';

@@ -4,13 +4,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BuildInfo } from '../src/build';
 
-// Changes limited to these paths cannot alter the packaged extension.
+// Root-relative globs keep all public assets in scope, regardless of their filenames.
 const NON_BUILD_PATHS = [
-  'docs',
-  'tests',
-  '.github',
+  'docs/**',
+  'tests/**',
+  '.github/**',
   '*.md',
   '*.test.ts',
+  'src/**/*.test.ts',
   'scripts/qa-samples.ts',
   'LICENSE',
   '.gitignore',
@@ -21,7 +22,7 @@ const NON_BUILD_PATHS = [
   'playwright.config.ts',
   'vitest.config.ts',
 ];
-const SCOPE = ['--', '.', ...NON_BUILD_PATHS.map((path) => `:(exclude)${path}`)];
+const SCOPE = ['--', '.', ...NON_BUILD_PATHS.map((path) => `:(top,glob,exclude)${path}`)];
 
 function git(root: string, args: string[]): Buffer {
   return execFileSync('git', args, {

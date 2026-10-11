@@ -16,6 +16,7 @@ import { JobStore, openDatabase, type Connection } from '../src/storage/database
 export default defineBackground(() => {
   const store = new JobStore(openDatabase());
   let serial: Promise<unknown> = Promise.resolve();
+  let schedulingPaused = 0;
   const sequence = <T>(action: () => Promise<T>): Promise<T> => {
     const result = serial.then(action, action);
     serial = result.catch(() => undefined);
@@ -39,13 +40,13 @@ export default defineBackground(() => {
           command: value,
         }),
         new Promise((resolve) => {
-          timer = setTimeout(() => resolve({ ok: false }), 2_000);
+          timer = setTimeout(() => resolve({ ok: false, error: 'timeout' }), 2_000);
         }),
       ]);
       const parsed = commandReplySchema.safeParse(reply);
-      return parsed.success ? parsed.data : { ok: false };
+      return parsed.success ? parsed.data : { ok: false, error: 'invalid_response' };
     } catch {
-      return { ok: false };
+      return { ok: false, error: 'source_unavailable' };
     } finally {
       clearTimeout(timer);
     }
@@ -71,13 +72,21 @@ export default defineBackground(() => {
         state: 'finalizing',
         bytes: state.bytes,
         total: job.total ?? state.bytes,
+        ...(state.destinationName ? { destinationName: state.destinationName } : {}),
       });
       if (prepared)
         await store.update(job.id, job.sessionId, { state: 'completed', bytes: state.bytes });
-    } else if (state.state === 'failed' || state.state === 'cancelled') {
+    } else if (
+      state.state === 'failed' ||
+      state.state === 'cancelled' ||
+      state.state === 'skipped'
+    ) {
       await store.update(job.id, job.sessionId, {
         state: state.state,
-        error: state.error ?? (state.state === 'cancelled' ? 'cancelled' : 'source_unavailable'),
+        error:
+          state.state === 'skipped'
+            ? undefined
+            : (state.error ?? (state.state === 'cancelled' ? 'cancelled' : 'source_unavailable')),
       });
     } else return false;
     const current = await store.get(job.id);
@@ -115,7 +124,9 @@ export default defineBackground(() => {
     );
   }
   async function schedule() {
+    if (schedulingPaused) return;
     for (;;) {
+      if (schedulingPaused) return;
       const job = await store.claimNext();
       if (!job) break;
       const result = await command(job, { type: 'start', jobId: job.id });
@@ -172,6 +183,8 @@ export default defineBackground(() => {
         tabId,
         sessionId,
         attempt: 1,
+        batchId: payload.batchId,
+        batchLabel: payload.batchLabel,
       };
       const result = await store.enqueue(job);
       await schedule();
@@ -190,6 +203,7 @@ export default defineBackground(() => {
             bytes: payload.bytes,
             total: payload.total,
             state: payload.state,
+            ...(payload.destinationName ? { destinationName: payload.destinationName } : {}),
           })
         : await store.update(payload.jobId, sessionId, {
             bytes: payload.bytes,
@@ -204,6 +218,64 @@ export default defineBackground(() => {
   }
   async function ui(raw: unknown) {
     const request = uiRequestSchema.parse(raw);
+    if (request.type === 'open_batch') {
+      const connection = (await store.connections()).find((entry) => entry.tabId === request.tabId);
+      if (!connection) return { ok: false, error: 'source_unavailable' };
+      const reply = await command(connection, { type: 'open_batch' });
+      if (reply.ok) await chrome.tabs.update(connection.tabId, { active: true });
+      return reply;
+    }
+    if (request.type === 'batch_action') {
+      const ids = [...new Set(request.ids)];
+      let accepted = 0;
+      if (request.action === 'cancel') {
+        schedulingPaused++;
+        try {
+          const selected = (await Promise.all(ids.map((id) => store.get(id)))).filter(
+            (job): job is JobRecord => !!job,
+          );
+          selected.sort((a, b) => Number(a.state !== 'queued') - Number(b.state !== 'queued'));
+          const unavailable = new Set<string>();
+          for (const job of selected) {
+            if (!['queued', 'downloading'].includes(job.state)) continue;
+            const key = `${job.tabId}:${job.sessionId}`;
+            if (unavailable.has(key)) continue;
+            const reply = await command(job, { type: 'cancel', jobId: job.id });
+            if (reply.ok) accepted++;
+            else {
+              if (
+                reply.error &&
+                ['timeout', 'source_unavailable', 'invalid_response'].includes(reply.error)
+              )
+                unavailable.add(key);
+              if (!(await sourceTabExists(job.tabId)))
+                await store.disconnect(job.tabId, job.sessionId);
+            }
+          }
+        } finally {
+          schedulingPaused--;
+        }
+        await schedule();
+      } else {
+        const groups = new Map<string, { connection: JobRecord; jobIds: string[] }>();
+        for (const id of ids) {
+          const job = await store.get(id);
+          if (!job || !['failed', 'cancelled', 'interrupted'].includes(job.state)) continue;
+          const key = `${job.tabId}:${job.sessionId}`;
+          const group = groups.get(key) ?? { connection: job, jobIds: [] };
+          group.jobIds.push(id);
+          groups.set(key, group);
+        }
+        for (const { connection, jobIds } of groups.values()) {
+          const reply = await command(connection, { type: 'retry_batch', jobIds });
+          if (reply.ok) {
+            accepted += Math.min(reply.accepted ?? jobIds.length, jobIds.length);
+            await chrome.tabs.update(connection.tabId, { active: true });
+          }
+        }
+      }
+      return { ok: true, accepted, rejected: ids.length - accepted };
+    }
     if (request.type === 'list') {
       await reconcile();
       await schedule();
@@ -244,7 +316,10 @@ export default defineBackground(() => {
       return response;
     }
     if (request.type === 'retry') {
-      const response = await command(job, { type: 'retry', jobId: job.id });
+      const response = await command(
+        job,
+        job.batchId ? { type: 'retry_batch', jobIds: [job.id] } : { type: 'retry', jobId: job.id },
+      );
       if (response.ok) {
         await chrome.tabs.update(job.tabId, { active: true });
         return { ok: true };
@@ -285,7 +360,9 @@ export default defineBackground(() => {
     if (
       message.scope === 'tad-ui' &&
       sender.id === chrome.runtime.id &&
-      sender.url === chrome.runtime.getURL('popup.html')
+      [chrome.runtime.getURL('popup.html'), chrome.runtime.getURL('manager.html')].includes(
+        sender.url ?? '',
+      )
     ) {
       void sequence(() => ui(message))
         .then(respond)

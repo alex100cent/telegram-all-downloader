@@ -369,6 +369,7 @@ pre {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
+  border: 0;
 }
 .primary-button:hover {
   background: var(--accent-hover);
@@ -692,6 +693,328 @@ pre {
 .donation-card:hover {
   text-decoration: none;
   outline: 1px solid var(--accent-border);
+}
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.secondary-button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent-border);
+}
+.download-launcher {
+  margin: 12px 0 16px;
+}
+.launcher-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.launcher-actions .secondary-button {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.manager-link,
+.more-downloads {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.more-downloads {
+  margin-top: 10px;
+}
+.download-launcher > p {
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.download-launcher > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 9px;
+}
+.download-launcher select,
+.manager-filters input,
+.manager-filters select,
+.manager-pagination select {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--surface);
+  min-width: 0;
+  color: var(--text);
+}
+.job-select {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin: 0 2px 0 0;
+  accent-color: var(--accent);
+}
+.job-batch {
+  border-left: 1px solid var(--line);
+  padding-left: 6px;
+  margin-left: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-view='manager'] body {
+  width: auto;
+  min-width: 360px;
+  max-height: none;
+}
+:root[data-view='manager'] .app-shell {
+  max-width: 1120px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+:root[data-view='manager'] .app-header {
+  padding: 28px 20px 22px;
+}
+:root[data-view='manager'] h1 span {
+  display: inline;
+}
+:root[data-view='manager'] .brand p {
+  font-size: 12px;
+}
+:root[data-view='manager'] .settings-panel {
+  max-width: 460px;
+}
+:root[data-view='manager'] .download-launcher {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px 20px;
+  padding: 18px 0;
+  margin: 0;
+}
+:root[data-view='manager'] .download-launcher > label {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+}
+:root[data-view='manager'] .launcher-actions {
+  grid-column: 1;
+  grid-row: 1;
+}
+:root[data-view='manager'] .download-launcher > p {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  margin: 0;
+}
+.manager-panel {
+  margin-top: 12px;
+}
+.manager-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.manager-heading h2 {
+  font-size: 24px;
+  letter-spacing: -0.5px;
+}
+.manager-heading p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.manager-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(110px, 1fr)) minmax(160px, 1.3fr);
+  gap: 12px;
+}
+.manager-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 0;
+}
+.manager-filters input,
+.manager-filters select {
+  width: 100%;
+  height: 38px;
+  font-size: 12px;
+}
+.batch-summary {
+  margin: 18px 0;
+}
+.batch-summary dl {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0;
+}
+.batch-summary dl > div {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+.batch-summary dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.batch-summary dd {
+  font-size: 23px;
+  font-weight: 650;
+  margin: 3px 0 0;
+}
+.batch-summary [data-state='completed'] dd {
+  color: var(--success);
+}
+.batch-summary [data-state='failed'] dd,
+.batch-summary [data-state='interrupted'] dd {
+  color: var(--failure);
+}
+.batch-summary [data-state='active'] dd {
+  color: var(--accent);
+}
+.batch-summary > p,
+.selection-toolbar > p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-top: 8px;
+}
+.selection-toolbar {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+.selection-controls,
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.selection-controls {
+  flex: 1;
+}
+.selection-count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.selection-toolbar > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.manager-results-heading {
+  margin: 18px 2px 9px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.manager-jobs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
+}
+.manager-jobs .job-card {
+  padding: 14px;
+}
+.manager-jobs .job-heading h3 {
+  font-size: 13px;
+}
+.manager-jobs .job-meta,
+.manager-jobs .job-status,
+.manager-jobs .retry-button,
+.manager-jobs .progress-caption {
+  font-size: 11px;
+}
+.manager-empty {
+  padding: 45px 20px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.manager-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 18px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.manager-pagination label,
+.manager-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:root[data-view='manager'] .app-footer {
+  margin-top: 20px;
+}
+:root[data-view='manager'] .footer-links {
+  justify-content: flex-start;
+}
+:root[data-view='manager'] .donation-card {
+  max-width: 360px;
+}
+@media (max-width: 800px) {
+  .manager-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .manager-jobs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .batch-summary dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  :root[data-view='manager'] .app-shell {
+    padding: 0;
+  }
+  :root[data-view='manager'] .download-launcher {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .manager-heading h2 {
+    font-size: 21px;
+  }
+  .manager-pagination > div {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 @keyframes progress {
   0% {

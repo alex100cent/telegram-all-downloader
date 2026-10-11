@@ -58,19 +58,26 @@ export const settingsSchema = z.object({
 });
 export const pagePayloadSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), client: z.enum(['a', 'k']), ready: z.boolean() }),
-  z.object({ type: z.literal('enqueue'), jobId: idSchema, media: mediaSchema }),
+  z.object({
+    type: z.literal('enqueue'),
+    jobId: idSchema,
+    media: mediaSchema,
+    batchId: idSchema.optional(),
+    batchLabel: z.string().min(1).max(128).optional(),
+  }),
   z.object({
     type: z.literal('progress'),
     jobId: idSchema,
     bytes: byteCount,
     total: byteCount.optional(),
     state: z.enum(['downloading', 'finalizing']),
+    destinationName: z.string().min(1).max(512).optional(),
   }),
   z.object({
     type: z.literal('finish'),
     jobId: idSchema,
     bytes: byteCount,
-    state: z.enum(['completed', 'failed', 'cancelled']),
+    state: z.enum(['completed', 'failed', 'cancelled', 'skipped']),
     error: errorSchema.optional(),
   }),
 ]);
@@ -85,6 +92,17 @@ export const uiRequestSchema = z.discriminatedUnion('type', [
   z.object({ scope: z.literal('tad-ui'), type: z.literal('list') }),
   z.object({
     scope: z.literal('tad-ui'),
+    type: z.literal('open_batch'),
+    tabId: z.number().int().nonnegative(),
+  }),
+  z.object({
+    scope: z.literal('tad-ui'),
+    type: z.literal('batch_action'),
+    action: z.enum(['cancel', 'retry']),
+    ids: z.array(idSchema).min(1).max(200),
+  }),
+  z.object({
+    scope: z.literal('tad-ui'),
     type: z.enum(['cancel', 'retry', 'open_source']),
     id: idSchema,
   }),
@@ -92,12 +110,16 @@ export const uiRequestSchema = z.discriminatedUnion('type', [
   z.object({ scope: z.literal('tad-ui'), type: z.literal('settings'), settings: settingsSchema }),
 ]);
 export const commandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('open_batch') }),
+  z.object({ type: z.literal('retry_batch'), jobIds: z.array(idSchema).min(1).max(200) }),
   z.object({ type: z.enum(['start', 'cancel', 'retry']), jobId: idSchema }),
   z.object({ type: z.literal('probe') }),
   z.object({ type: z.literal('settings'), settings: settingsSchema }),
 ]);
 export const commandReplySchema = z.object({
   ok: z.boolean(),
+  accepted: z.number().int().min(0).max(200).optional(),
+  rejected: z.number().int().min(0).max(200).optional(),
   error: z.string().max(128).optional(),
   jobs: z
     .array(
@@ -112,10 +134,12 @@ export const commandReplySchema = z.object({
             'failed',
             'cancelled',
             'interrupted',
+            'skipped',
           ]),
           bytes: byteCount.optional(),
           total: byteCount.optional(),
           error: errorSchema.optional(),
+          destinationName: z.string().min(1).max(512).optional(),
         })
         .refine(
           (job) => job.total === undefined || job.bytes === undefined || job.bytes <= job.total,
@@ -133,12 +157,15 @@ export type PagePayload = z.infer<typeof pagePayloadSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export interface CommandReply {
   ok: boolean;
+  accepted?: number;
+  rejected?: number;
   jobs?: {
     id: string;
     state: string;
     bytes?: number;
     total?: number;
     error?: z.infer<typeof errorSchema>;
+    destinationName?: string;
   }[];
   error?: string;
 }
