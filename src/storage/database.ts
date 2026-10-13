@@ -1,6 +1,7 @@
 import { openDB, type DBSchema } from 'idb';
 import { ACTIVE_STATES, type JobRecord } from '../domain/jobs';
 import type { TelegramClient } from '../domain/media';
+import { DEFAULT_DONATION_STATE, DONATION_INTERVAL, type DonationState } from '../domain/donations';
 
 export interface Connection {
   tabId: number;
@@ -11,12 +12,16 @@ export interface Connection {
 interface Database extends DBSchema {
   jobs: { key: string; value: JobRecord; indexes: { key: string } };
   connections: { key: number; value: Connection };
+  donation: { key: string; value: DonationState };
 }
 export function openDatabase(name = 'telegram-all-downloader') {
-  return openDB<Database>(name, 1, {
-    upgrade(db) {
-      db.createObjectStore('jobs', { keyPath: 'id' }).createIndex('key', 'key');
-      db.createObjectStore('connections', { keyPath: 'tabId' });
+  return openDB<Database>(name, 2, {
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        db.createObjectStore('jobs', { keyPath: 'id' }).createIndex('key', 'key');
+        db.createObjectStore('connections', { keyPath: 'tabId' });
+      }
+      if (oldVersion < 2) db.createObjectStore('donation');
     },
   });
 }
@@ -24,6 +29,25 @@ export type DatabasePromise = ReturnType<typeof openDatabase>;
 
 export class JobStore {
   constructor(private readonly database: DatabasePromise) {}
+  async donation(): Promise<DonationState> {
+    return (await (await this.database).get('donation', 'state')) ?? { ...DEFAULT_DONATION_STATE };
+  }
+  async dismissDonation(milestone: number): Promise<boolean> {
+    const tx = (await this.database).transaction('donation', 'readwrite');
+    const state = (await tx.store.get('state')) ?? { ...DEFAULT_DONATION_STATE };
+    if (
+      !Number.isSafeInteger(milestone) ||
+      milestone <= state.dismissedMilestone ||
+      milestone % DONATION_INTERVAL !== 0 ||
+      milestone > state.completedDownloads
+    ) {
+      await tx.done;
+      return false;
+    }
+    await tx.store.put({ ...state, dismissedMilestone: milestone }, 'state');
+    await tx.done;
+    return true;
+  }
   async all(): Promise<JobRecord[]> {
     return (await (await this.database).getAll('jobs')).sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -71,8 +95,9 @@ export class JobStore {
     sessionId: string,
     patch: Partial<Pick<JobRecord, 'state' | 'bytes' | 'total' | 'error' | 'destinationName'>>,
   ): Promise<boolean> {
-    const tx = (await this.database).transaction('jobs', 'readwrite');
-    const job = await tx.store.get(id);
+    const tx = (await this.database).transaction(['jobs', 'donation'], 'readwrite');
+    const jobs = tx.objectStore('jobs');
+    const job = await jobs.get(id);
     if (!job || job.sessionId !== sessionId || !ACTIVE_STATES.includes(job.state)) {
       await tx.done;
       return false;
@@ -109,7 +134,18 @@ export class JobStore {
       await tx.done;
       return false;
     }
-    await tx.store.put({ ...job, ...patch, bytes, total, updatedAt: Date.now() });
+    await jobs.put({ ...job, ...patch, bytes, total, updatedAt: Date.now() });
+    if (patch.state === 'completed') {
+      const donation = tx.objectStore('donation');
+      const state = (await donation.get('state')) ?? { ...DEFAULT_DONATION_STATE };
+      await donation.put(
+        {
+          ...state,
+          completedDownloads: Math.min(Number.MAX_SAFE_INTEGER, state.completedDownloads + 1),
+        },
+        'state',
+      );
+    }
     await tx.done;
     return true;
   }

@@ -1,5 +1,6 @@
 import {
   commandReplySchema,
+  donationRequestSchema,
   idSchema,
   isRecord,
   pagePayloadSchema,
@@ -16,6 +17,7 @@ import { JobStore, openDatabase, type Connection } from '../src/storage/database
 export default defineBackground(() => {
   const store = new JobStore(openDatabase());
   let serial: Promise<unknown> = Promise.resolve();
+  let donationPublishing: Promise<void> = Promise.resolve();
   let schedulingPaused = 0;
   const sequence = <T>(action: () => Promise<T>): Promise<T> => {
     const result = serial.then(action, action);
@@ -26,6 +28,49 @@ export default defineBackground(() => {
     const saved = await chrome.storage.local.get('settings');
     const parsed = settingsSchema.safeParse(saved.settings);
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
+  }
+  function publishDonation(connections?: Connection[]): Promise<void> {
+    donationPublishing = donationPublishing
+      .then(async () => {
+        const [donation, currentSettings, recipients] = await Promise.all([
+          store.donation(),
+          settings(),
+          connections ?? store.connections(),
+        ]);
+        for (const connection of recipients) {
+          void chrome.tabs
+            .sendMessage(connection.tabId, {
+              scope: 'tad-donation',
+              donation,
+              settings: currentSettings,
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return donationPublishing;
+  }
+  async function saveSettings(value: Settings): Promise<void> {
+    await chrome.storage.local.set({ settings: value });
+    await store.prune(value.keepHistory);
+    await publishDonation();
+    await Promise.all(
+      (await store.connections()).map((connection) =>
+        command(connection, { type: 'settings', settings: value }),
+      ),
+    );
+  }
+  async function donationAction(
+    request:
+      { type: 'dismiss_donation'; milestone: number } | { type: 'disable_donation_reminders' },
+  ) {
+    if (request.type === 'dismiss_donation') {
+      await store.dismissDonation(request.milestone);
+      await publishDonation();
+    } else {
+      await saveSettings({ ...(await settings()), donationReminders: false });
+    }
+    return { ok: true };
   }
   async function command(
     connection: Pick<Connection, 'tabId' | 'sessionId'>,
@@ -74,8 +119,11 @@ export default defineBackground(() => {
         total: job.total ?? state.bytes,
         ...(state.destinationName ? { destinationName: state.destinationName } : {}),
       });
-      if (prepared)
-        await store.update(job.id, job.sessionId, { state: 'completed', bytes: state.bytes });
+      if (
+        prepared &&
+        (await store.update(job.id, job.sessionId, { state: 'completed', bytes: state.bytes }))
+      )
+        await publishDonation();
     } else if (
       state.state === 'failed' ||
       state.state === 'cancelled' ||
@@ -158,7 +206,9 @@ export default defineBackground(() => {
   }
   async function page(payload: PagePayload, sessionId: string, tabId: number) {
     if (payload.type === 'hello') {
-      await store.connect({ tabId, sessionId, client: payload.client, ready: payload.ready });
+      const connection = { tabId, sessionId, client: payload.client, ready: payload.ready };
+      await store.connect(connection);
+      await publishDonation([connection]);
       await schedule();
       return { ok: true, settings: await settings() };
     }
@@ -211,6 +261,7 @@ export default defineBackground(() => {
             error: payload.error,
           });
     if (payload.type === 'finish') {
+      if (changed && payload.state === 'completed') await publishDonation();
       await store.prune((await settings()).keepHistory);
       await schedule();
     }
@@ -218,6 +269,8 @@ export default defineBackground(() => {
   }
   async function ui(raw: unknown) {
     const request = uiRequestSchema.parse(raw);
+    if (request.type === 'dismiss_donation' || request.type === 'disable_donation_reminders')
+      return donationAction(request);
     if (request.type === 'open_batch') {
       const connection = (await store.connections()).find((entry) => entry.tabId === request.tabId);
       if (!connection) return { ok: false, error: 'source_unavailable' };
@@ -285,16 +338,11 @@ export default defineBackground(() => {
         jobs: await store.all(),
         settings: await settings(),
         connections: await store.connections(),
+        donation: await store.donation(),
       };
     }
     if (request.type === 'settings') {
-      await chrome.storage.local.set({ settings: request.settings });
-      await store.prune(request.settings.keepHistory);
-      await Promise.all(
-        (await store.connections()).map((connection) =>
-          command(connection, { type: 'settings', settings: request.settings }),
-        ),
-      );
+      await saveSettings(request.settings);
       return { ok: true };
     }
     if (request.type === 'clear_history') {
@@ -333,6 +381,28 @@ export default defineBackground(() => {
   }
   chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     if (!isRecord(message)) return false;
+    if (message.scope === 'tad-donation') {
+      const parsed = donationRequestSchema.safeParse(message);
+      if (
+        !parsed.success ||
+        sender.id !== chrome.runtime.id ||
+        sender.tab?.id === undefined ||
+        sender.frameId !== 0 ||
+        !sender.url?.match(/^https:\/\/web\.telegram\.org\/(a|k)\//)
+      )
+        return false;
+      void sequence(async () => {
+        const connection = (await store.connections()).find(
+          (entry) => entry.tabId === sender.tab!.id,
+        );
+        if (!connection || new URL(sender.url!).pathname.split('/')[1] !== connection.client)
+          return { ok: false, error: 'source_unavailable' };
+        return donationAction(parsed.data);
+      })
+        .then(respond)
+        .catch(() => respond({ ok: false, error: 'source_unavailable' }));
+      return true;
+    }
     if (message.scope === 'tad-page') {
       const parsed = pagePayloadSchema.safeParse(message.payload);
       if (

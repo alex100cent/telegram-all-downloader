@@ -31,6 +31,12 @@ export interface Settings {
   language: 'auto' | 'ru' | 'en';
   theme: 'system' | 'light' | 'dark';
   keepHistory: boolean;
+  donationReminders: boolean;
 }
-export const DEFAULT_SETTINGS: Settings = { language: 'auto', theme: 'system', keepHistory: true };
+export const DEFAULT_SETTINGS: Settings = {
+  language: 'en',
+  theme: 'system',
+  keepHistory: true,
+  donationReminders: true,
+};
 export const ACTIVE_STATES: JobState[] = ['queued', 'downloading', 'finalizing'];

@@ -231,6 +231,9 @@ h2 {
   margin-top: 6px;
   padding-right: 20px;
 }
+.donation-setting {
+  margin-top: 12px;
+}
 code,
 pre {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
@@ -671,7 +674,8 @@ pre {
   gap: 9px;
   align-items: center;
   border-radius: 9px;
-  background: var(--accent-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
   padding: 12px;
   margin-bottom: 13px;
   color: var(--text);
@@ -692,7 +696,41 @@ pre {
 }
 .donation-card:hover {
   text-decoration: none;
-  outline: 1px solid var(--accent-border);
+  border-color: var(--accent-border);
+}
+.donation-reminder {
+  padding: 12px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.donation-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.donation-heading svg {
+  color: var(--accent);
+}
+.donation-reminder > p {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.donation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+.donation-actions .donation-never {
+  color: var(--muted);
+}
+:root[data-view='manager'] .donation-reminder {
+  max-width: 520px;
 }
 .secondary-button {
   display: inline-flex;

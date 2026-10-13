@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DONATION_INTERVAL } from '../domain/donations';
 
 export const CHANNEL = 'telegram-all-downloader:v1';
 export const idSchema = z.string().min(1).max(128);
@@ -55,7 +56,26 @@ export const settingsSchema = z.object({
   language: z.enum(['auto', 'ru', 'en']),
   theme: z.enum(['system', 'light', 'dark']),
   keepHistory: z.boolean(),
+  donationReminders: z.boolean().default(true),
 });
+const donationMilestoneSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER)
+  .multipleOf(DONATION_INTERVAL);
+export const donationStateSchema = z.object({
+  completedDownloads: byteCount,
+  dismissedMilestone: byteCount,
+});
+export const donationRequestSchema = z.discriminatedUnion('type', [
+  z.object({
+    scope: z.literal('tad-donation'),
+    type: z.literal('dismiss_donation'),
+    milestone: donationMilestoneSchema,
+  }),
+  z.object({ scope: z.literal('tad-donation'), type: z.literal('disable_donation_reminders') }),
+]);
 export const pagePayloadSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), client: z.enum(['a', 'k']), ready: z.boolean() }),
   z.object({
@@ -90,6 +110,12 @@ export const pageRequestSchema = z.object({
 });
 export const uiRequestSchema = z.discriminatedUnion('type', [
   z.object({ scope: z.literal('tad-ui'), type: z.literal('list') }),
+  z.object({
+    scope: z.literal('tad-ui'),
+    type: z.literal('dismiss_donation'),
+    milestone: donationMilestoneSchema,
+  }),
+  z.object({ scope: z.literal('tad-ui'), type: z.literal('disable_donation_reminders') }),
   z.object({
     scope: z.literal('tad-ui'),
     type: z.literal('open_batch'),

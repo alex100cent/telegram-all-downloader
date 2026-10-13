@@ -33,6 +33,12 @@ Click **↓** next to an attachment to save it. For a batch, open the extension,
 
 Keep the Telegram tab open while downloading. Batches include discovered attachments, not the entire chat history. Files keep Telegram's format; animations may save as MP4.
 
-**0.2.0 preview · Tested in Chrome on macOS.** See [compatibility and known limits](docs/compatibility.md) for format coverage and other browsers.
+**0.2.1 preview · Tested in Chrome on macOS.** See [compatibility and known limits](docs/compatibility.md) for format coverage and other browsers.
 
 [Changelog](CHANGELOG.md) · [Roadmap](PLAN.md) · [Privacy](PRIVACY.md) · [Report an issue](https://github.com/alex100cent/telegram-all-downloader/issues) · [MIT License](LICENSE)
+
+## Support the project
+
+If this extension saves you time, [☕ buy the developer a coffee](https://app.lava.top/294798508). Donations are optional — every feature stays free.
+
+You can turn off coffee reminders in **Settings**, where you can also switch the interface from English to Russian.

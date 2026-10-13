@@ -1,6 +1,8 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DONATION_URL } from '../config';
+import type { DonationState } from '../domain/donations';
 import { DEFAULT_SETTINGS, type JobRecord, type Settings } from '../domain/jobs';
 import { App } from './App';
 
@@ -37,6 +39,7 @@ describe('popup', () => {
   let root: Root;
   let jobs: JobRecord[];
   let settings: Settings;
+  let donation: DonationState | undefined;
   let connections: Array<{ tabId: number; client: 'a' | 'k'; ready: boolean }>;
   let batchResult: { ok: boolean; accepted: number; rejected: number };
   const sendMessage =
@@ -49,6 +52,7 @@ describe('popup', () => {
         ids?: string[];
         action?: 'cancel' | 'retry';
         tabId?: number;
+        milestone?: number;
       }) => Promise<unknown>
     >();
 
@@ -56,13 +60,17 @@ describe('popup', () => {
     vi.useFakeTimers();
     jobs = [];
     settings = { ...DEFAULT_SETTINGS, language: 'en' };
+    donation = { completedDownloads: 0, dismissedMilestone: 0 };
     connections = [{ tabId: 7, client: 'a', ready: true }];
     batchResult = { ok: true, accepted: 1, rejected: 0 };
     sendMessage.mockReset();
     sendMessage.mockImplementation(async (message) => {
-      if (message.type === 'list') return { ok: true, jobs, settings, connections };
+      if (message.type === 'list') return { ok: true, jobs, settings, connections, donation };
       if (message.type === 'batch_action') return batchResult;
       if (message.type === 'settings' && message.settings) settings = message.settings;
+      if (message.type === 'dismiss_donation' && donation && message.milestone !== undefined)
+        donation.dismissedMilestone = message.milestone;
+      if (message.type === 'disable_donation_reminders') settings.donationReminders = false;
       return { ok: true };
     });
     vi.stubGlobal('chrome', {
@@ -115,14 +123,136 @@ describe('popup', () => {
     await act(async () => button.click());
   }
 
-  it('shows a useful empty state without a fictional donation link', async () => {
+  it('keeps the empty state primary and offers the configured optional support link', async () => {
     await render();
     expect(container.textContent).toContain('Save something worth keeping');
     expect(container.querySelector<HTMLAnchorElement>('.primary-button')?.href).toBe(
       'https://web.telegram.org/a/',
     );
-    expect(container.querySelector('.donation-card')).toBeNull();
+    expect(container.querySelector<HTMLAnchorElement>('.donation-card')?.href).toBe(DONATION_URL);
+    expect(container.querySelector('.donation-reminder')).toBeNull();
     expect(container.textContent).toContain('Web A');
+  });
+
+  it('shows one inline reminder at a completed-download milestone without opening links or stealing focus', async () => {
+    const openWindow = vi.spyOn(window, 'open').mockReturnValue(null);
+    const focusTarget = document.createElement('button');
+    document.body.append(focusTarget);
+    focusTarget.focus();
+    donation = { completedDownloads: 19, dismissedMilestone: 0 };
+    await render();
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    donation.completedDownloads = 20;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    const reminder = container.querySelector('.donation-reminder');
+    expect(reminder?.textContent).toContain('Buy the developer a coffee');
+    expect(reminder?.textContent).toContain('optional');
+    expect(reminder?.querySelector<HTMLAnchorElement>('a')?.href).toBe(DONATION_URL);
+    expect(reminder?.querySelector<HTMLAnchorElement>('a')?.rel).toBe('noreferrer');
+    expect(container.querySelector('.donation-card')).toBeNull();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(focusTarget);
+    expect(openWindow).not.toHaveBeenCalled();
+    expect(sendMessage.mock.calls.every(([message]) => message.type === 'list')).toBe(true);
+    focusTarget.remove();
+    openWindow.mockRestore();
+  });
+
+  it('dismisses only the current milestone and offers the next reminder in the manager', async () => {
+    donation = { completedDownloads: 20, dismissedMilestone: 0 };
+    await render('manager');
+    await click('Not now');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'dismiss_donation',
+      milestone: 20,
+    });
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    expect(container.querySelector('.donation-card')).not.toBeNull();
+    donation.completedDownloads = 39;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    donation.completedDownloads = 40;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(container.querySelectorAll('.donation-reminder')).toHaveLength(1);
+    await click('Not now');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'dismiss_donation',
+      milestone: 40,
+    });
+  });
+
+  it('disables reminders globally while retaining the quiet voluntary support link', async () => {
+    donation = { completedDownloads: 20, dismissedMilestone: 0 };
+    await render();
+    await click('Don’t show again');
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'disable_donation_reminders',
+    });
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    donation.completedDownloads = 100;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    expect(container.querySelector<HTMLAnchorElement>('.donation-card')?.href).toBe(DONATION_URL);
+    await click('Settings');
+    expect(container.querySelector<HTMLInputElement>('#donation-reminders')?.checked).toBe(false);
+  });
+
+  it('dismisses the reminder on an explicit support-link click', async () => {
+    donation = { completedDownloads: 20, dismissedMilestone: 0 };
+    await render();
+    const link = container.querySelector<HTMLAnchorElement>('.donation-reminder a');
+    if (!link) throw new Error('Support link missing');
+    link.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => link.click());
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'dismiss_donation',
+      milestone: 20,
+    });
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+  });
+
+  it('does not derive reminders from history when an older snapshot omits donation state', async () => {
+    donation = undefined;
+    jobs = Array.from({ length: 20 }, (_, index) =>
+      makeJob({ id: `saved-${index}`, state: 'completed' }),
+    );
+    await render();
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    expect(container.querySelector('.donation-card')).not.toBeNull();
+  });
+
+  it('keeps reminders out of settings and translates reminder preferences and actions to Russian', async () => {
+    settings = { ...DEFAULT_SETTINGS };
+    donation = { completedDownloads: 20, dismissedMilestone: 0 };
+    await render();
+    expect(document.documentElement.lang).toBe('en');
+    await click('Settings');
+    expect(container.querySelector('.donation-reminder')).toBeNull();
+    expect(container.querySelector<HTMLSelectElement>('#language')?.value).toBe('en');
+    await choose('language', 'ru');
+    expect(container.textContent).toContain('Напоминать о поддержке');
+    const reminders = container.querySelector<HTMLInputElement>('#donation-reminders');
+    if (!reminders) throw new Error('Reminder setting missing');
+    await act(async () => reminders.click());
+    expect(sendMessage).toHaveBeenCalledWith({
+      scope: 'tad-ui',
+      type: 'settings',
+      settings: { ...DEFAULT_SETTINGS, language: 'ru', donationReminders: false },
+    });
+    await act(async () => reminders.click());
+    await click('Закрыть настройки');
+    expect(container.querySelector('.donation-reminder')?.textContent).toContain(
+      'Купить кофе разработчику',
+    );
+    expect(container.querySelector('.donation-reminder')?.textContent).toContain(
+      'Больше не показывать',
+    );
+    await click('Не сейчас');
+    expect(container.querySelector('.donation-reminder')).toBeNull();
   });
 
   it('reports a known percentage and leaves unknown totals indeterminate', async () => {

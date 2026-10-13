@@ -53,6 +53,12 @@ interface Messages {
   reportIssue: string;
   donate: string;
   donateHint: string;
+  donationMessage: string;
+  donationAction: string;
+  donationNotNow: string;
+  donationNever: string;
+  donationReminders: string;
+  donationRemindersHint: string;
   loading: string;
   unavailable: string;
   operationFailed: string;
@@ -202,6 +208,14 @@ export const messages: Record<Language, Messages> = {
     reportIssue: 'Report an issue',
     donate: 'Buy the developer a coffee',
     donateHint: 'Free and open source. Always.',
+    donationMessage:
+      'Enjoying the downloads? A coffee is a welcome, optional way to support this free project.',
+    donationAction: 'Buy a coffee',
+    donationNotNow: 'Not now',
+    donationNever: 'Don’t show again',
+    donationReminders: 'Coffee reminders',
+    donationRemindersHint:
+      'Show a small reminder after every 20 successfully saved files. Downloads are never interrupted.',
     loading: 'Loading downloads…',
     unavailable: 'Could not connect to the extension. Try reopening this popup.',
     operationFailed: 'This action could not be completed. Please try again.',
@@ -331,6 +345,14 @@ export const messages: Record<Language, Messages> = {
     reportIssue: 'Сообщить о проблеме',
     donate: 'Купить кофе разработчику',
     donateHint: 'Бесплатно и с открытым кодом. Всегда.',
+    donationMessage:
+      'Нравится скачивать с нами? Можно угостить автора кофе и поддержать этот бесплатный проект.',
+    donationAction: 'Угостить кофе',
+    donationNotNow: 'Не сейчас',
+    donationNever: 'Больше не показывать',
+    donationReminders: 'Напоминать о поддержке',
+    donationRemindersHint:
+      'Небольшое напоминание после каждых 20 успешно сохранённых файлов. Загрузки не прерываются.',
     loading: 'Загружаем список…',
     unavailable: 'Не удалось связаться с расширением. Попробуйте открыть это окно заново.',
     operationFailed: 'Не удалось выполнить действие. Попробуйте ещё раз.',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BUILD } from '../build';
 import { DONATION_URL, REPOSITORY_URL } from '../config';
+import { pendingDonationMilestone, type DonationState } from '../domain/donations';
 import type { ErrorCode } from '../domain/errors';
 import {
   ACTIVE_STATES,
@@ -18,6 +19,7 @@ import { Icon, type IconName } from './Icon';
 interface Snapshot {
   jobs: JobRecord[];
   settings: Settings;
+  donation?: DonationState;
   connections: Array<{ tabId: number; client: TelegramClient; ready: boolean }>;
 }
 
@@ -26,6 +28,8 @@ type Action =
   | { type: 'batch_action'; action: 'cancel' | 'retry'; ids: string[] }
   | { type: 'open_batch'; tabId: number }
   | { type: 'clear_history' }
+  | { type: 'dismiss_donation'; milestone: number }
+  | { type: 'disable_donation_reminders' }
   | { type: 'settings'; settings: Settings };
 type ListReply = ({ ok: true } & Snapshot) | { ok: false; error?: string };
 type ActionReply = { ok: boolean; error?: string; accepted?: number; rejected?: number };
@@ -619,6 +623,7 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
         setSnapshot({
           jobs: response.jobs,
           settings: response.settings,
+          donation: response.donation,
           connections: response.connections,
         });
         setUnavailable(false);
@@ -728,6 +733,15 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
   const batchTab =
     readyTabs.find((connection) => connection.tabId === selectedTab)?.tabId ?? readyTabs[0]?.tabId;
   const managerUrl = chrome.runtime.getURL('manager.html');
+  const donationMilestone = snapshot?.donation
+    ? pendingDonationMilestone(snapshot.donation)
+    : undefined;
+  const showDonationReminder =
+    Boolean(DONATION_URL) &&
+    settings.donationReminders &&
+    donationMilestone !== undefined &&
+    !settingsOpen &&
+    !unavailable;
   const changeSettings = (patch: Partial<Settings>) => {
     void execute({ type: 'settings', settings: { ...settings, ...patch } });
   };
@@ -827,9 +841,9 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
                   changeSettings({ language: event.target.value as Settings['language'] })
                 }
               >
-                <option value="auto">{t.autoLanguage}</option>
-                <option value="ru">Русский</option>
                 <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="auto">{t.autoLanguage}</option>
               </select>
             </label>
             <label className="setting-row" htmlFor="theme">
@@ -860,6 +874,20 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
             </label>
             <p className="setting-hint" id="history-hint">
               {t.historyHint}
+            </p>
+            <label className="history-setting donation-setting" htmlFor="donation-reminders">
+              <span>{t.donationReminders}</span>
+              <input
+                id="donation-reminders"
+                type="checkbox"
+                checked={settings.donationReminders}
+                disabled={pending || !snapshot}
+                onChange={(event) => changeSettings({ donationReminders: event.target.checked })}
+                aria-describedby="donation-hint"
+              />
+            </label>
+            <p className="setting-hint" id="donation-hint">
+              {t.donationRemindersHint}
             </p>
             <div className="about-build" role="group" aria-labelledby="about-title">
               <h3 id="about-title">{t.aboutBuild}</h3>
@@ -916,6 +944,48 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
           <p className="loading-state" role="status">
             {t.loading}
           </p>
+        )}
+
+        {showDonationReminder && donationMilestone !== undefined && (
+          <aside className="donation-reminder" aria-labelledby="donation-title">
+            <div className="donation-heading">
+              <Icon name="coffee" width="18" height="18" />
+              <h2 id="donation-title">{t.donate}</h2>
+            </div>
+            <p>{t.donationMessage}</p>
+            <div className="donation-actions">
+              <a
+                className="secondary-button"
+                href={DONATION_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() =>
+                  void execute({ type: 'dismiss_donation', milestone: donationMilestone })
+                }
+              >
+                {t.donationAction}
+                <Icon name="external" width="12" height="12" />
+              </a>
+              <button
+                className="text-button"
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  void execute({ type: 'dismiss_donation', milestone: donationMilestone })
+                }
+              >
+                {t.donationNotNow}
+              </button>
+              <button
+                className="text-button donation-never"
+                type="button"
+                disabled={pending}
+                onClick={() => void execute({ type: 'disable_donation_reminders' })}
+              >
+                {t.donationNever}
+              </button>
+            </div>
+          </aside>
         )}
 
         {snapshot && !hasJobs && mode === 'popup' && (
@@ -1029,7 +1099,7 @@ export function App({ mode = 'popup' }: { mode?: 'popup' | 'manager' }) {
       </main>
 
       <footer className="app-footer">
-        {DONATION_URL && (
+        {DONATION_URL && !showDonationReminder && (
           <a className="donation-card" href={DONATION_URL} target="_blank" rel="noreferrer">
             <Icon name="coffee" width="23" height="23" />
             <span>

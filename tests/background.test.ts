@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobStore, openDatabase } from '../src/storage/database';
-import type { JobRecord } from '../src/domain/jobs';
+import { DEFAULT_SETTINGS, type JobRecord } from '../src/domain/jobs';
 import type { Command } from '../src/bridge/protocol';
 
 const testDatabase = vi.hoisted(() => ({ name: 'background-test' }));
@@ -60,6 +60,9 @@ let sendCommand: ReturnType<
     (tabId: number, message: { command: Command; sessionId?: string }) => Promise<unknown>
   >
 >;
+let sendDonation: ReturnType<typeof vi.fn<(tabId: number, message: unknown) => Promise<unknown>>>;
+let storedSettings: Record<string, unknown>;
+let readSettings: ReturnType<typeof vi.fn<() => Promise<Record<string, unknown>>>>;
 
 function send(
   message: unknown,
@@ -80,6 +83,9 @@ beforeEach(() => {
   testDatabase.name = `background-${crypto.randomUUID()}`;
   store = new JobStore(openDatabase());
   sendCommand = vi.fn(async () => ({ ok: true, jobs: [] }));
+  sendDonation = vi.fn(async () => undefined);
+  storedSettings = {};
+  readSettings = vi.fn(async () => storedSettings);
   vi.stubGlobal('defineBackground', (callback: unknown) => callback);
   vi.stubGlobal('chrome', {
     runtime: {
@@ -92,13 +98,23 @@ beforeEach(() => {
       },
       onStartup: { addListener: vi.fn() },
     },
-    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+    storage: {
+      local: {
+        get: readSettings,
+        set: vi.fn(async (value: Record<string, unknown>) => {
+          storedSettings = { ...storedSettings, ...value };
+        }),
+      },
+    },
     action: {
       setBadgeText: vi.fn(async () => undefined),
       setBadgeBackgroundColor: vi.fn(async () => undefined),
     },
     tabs: {
-      sendMessage: sendCommand,
+      sendMessage: (tabId: number, message: { scope: string; command: Command }) =>
+        message.scope === 'tad-donation'
+          ? sendDonation(tabId, message)
+          : sendCommand(tabId, message),
       get: vi.fn(async (id: number) => ({ id, url: 'https://web.telegram.org/a/' })),
       update: vi.fn(async () => undefined),
       create: vi.fn(async () => undefined),
@@ -570,6 +586,7 @@ describe('background coordinator', () => {
         }),
       ).toEqual({ ok: false });
       expect((await store.get('one'))?.state).toBe(state);
+      expect((await store.donation()).completedDownloads).toBe(state === 'completed' ? 1 : 0);
     },
   );
 
@@ -650,6 +667,10 @@ describe('background coordinator', () => {
     await vi.waitFor(async () => expect((await store.get('one'))?.state).toBe('completed'), {
       timeout: 500,
     });
+    expect((await store.donation()).completedDownloads).toBe(1);
+    await start();
+    await send({ scope: 'tad-ui', type: 'list' }, uiSender);
+    expect((await store.donation()).completedDownloads).toBe(1);
   });
 
   it('acknowledges live writer progress while another tab probe is unresponsive', async () => {
@@ -813,5 +834,206 @@ describe('background coordinator', () => {
       error: 'finalizing',
     });
     expect(sendCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('donation coordination', () => {
+  const hello = () =>
+    send({
+      scope: 'tad-page',
+      sessionId: 'session-1',
+      payload: { type: 'hello', client: 'a', ready: true },
+    });
+  async function complete(id: string) {
+    await store.enqueue(record(id));
+    await store.claimNext();
+    await send({
+      scope: 'tad-page',
+      sessionId: 'session-1',
+      payload: { type: 'progress', jobId: id, state: 'finalizing', bytes: 4 },
+    });
+    return send({
+      scope: 'tad-page',
+      sessionId: 'session-1',
+      payload: { type: 'finish', jobId: id, state: 'completed', bytes: 4 },
+    });
+  }
+
+  it('defaults to English and upgrades saved language settings without losing explicit choices', async () => {
+    await start();
+    expect(await send({ scope: 'tad-ui', type: 'list' }, uiSender)).toMatchObject({
+      settings: { ...DEFAULT_SETTINGS, language: 'en', donationReminders: true },
+      donation: { completedDownloads: 0, dismissedMilestone: 0 },
+    });
+    for (const language of ['ru', 'en', 'auto']) {
+      storedSettings = {
+        settings: { language, theme: 'dark', keepHistory: false },
+      };
+      expect(await send({ scope: 'tad-ui', type: 'list' }, uiSender)).toMatchObject({
+        settings: { language, theme: 'dark', keepHistory: false, donationReminders: true },
+      });
+    }
+  });
+
+  it('sends donation snapshots to known source tabs on hello and successful completion', async () => {
+    await start();
+    await hello();
+    expect(sendDonation).toHaveBeenLastCalledWith(1, {
+      scope: 'tad-donation',
+      donation: { completedDownloads: 0, dismissedMilestone: 0 },
+      settings: DEFAULT_SETTINGS,
+    });
+    const db = await openDatabase();
+    await db.put('donation', { completedDownloads: 18, dismissedMilestone: 0 }, 'state');
+    expect(await complete('nineteen')).toEqual({ ok: true });
+    expect(sendDonation).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        donation: { completedDownloads: 19, dismissedMilestone: 0 },
+      }),
+    );
+    expect(await complete('twenty')).toEqual({ ok: true });
+    expect(sendDonation).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        donation: { completedDownloads: 20, dismissedMilestone: 0 },
+      }),
+    );
+    const calls = sendDonation.mock.calls.length;
+    expect(
+      await send({
+        scope: 'tad-page',
+        sessionId: 'session-1',
+        payload: { type: 'finish', jobId: 'twenty', state: 'completed', bytes: 4 },
+      }),
+    ).toEqual({ ok: false });
+    expect(sendDonation).toHaveBeenCalledTimes(calls);
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it.each(['reject', 'hang'] as const)(
+    'keeps downloads successful if donation delivery can %s',
+    async (failure) => {
+      await start();
+      await hello();
+      if (failure === 'reject') sendDonation.mockRejectedValue(new Error('closed page'));
+      else sendDonation.mockImplementation(() => new Promise(() => undefined));
+      let reply: unknown;
+      void complete('one').then((value) => {
+        reply = value;
+      });
+      await vi.waitFor(() => expect(reply).toEqual({ ok: true }), { timeout: 500 });
+      expect((await store.get('one'))?.state).toBe('completed');
+      expect((await store.donation()).completedDownloads).toBe(1);
+    },
+  );
+
+  it('retains the counter with history disabled and rejects completion replay after pruning', async () => {
+    await start();
+    await hello();
+    await send(
+      { scope: 'tad-ui', type: 'settings', settings: { ...DEFAULT_SETTINGS, keepHistory: false } },
+      uiSender,
+    );
+    expect(await complete('one')).toEqual({ ok: true });
+    expect(await store.all()).toEqual([]);
+    expect(
+      await send({
+        scope: 'tad-page',
+        sessionId: 'session-1',
+        payload: { type: 'finish', jobId: 'one', state: 'completed', bytes: 4 },
+      }),
+    ).toEqual({ ok: false });
+    await send({ scope: 'tad-ui', type: 'clear_history' }, managerSender);
+    expect((await store.donation()).completedDownloads).toBe(1);
+  });
+
+  it('checks the source sender, keeps newer milestones pending, and synchronizes dismissal globally', async () => {
+    await start();
+    await hello();
+    await store.connect({ tabId: 2, sessionId: 'session-2', client: 'k', ready: true });
+    const db = await openDatabase();
+    await db.put('donation', { completedDownloads: 40, dismissedMilestone: 0 }, 'state');
+    const request = { scope: 'tad-donation', type: 'dismiss_donation', milestone: 20 };
+    for (const sender of [
+      { ...sourceSender(), id: 'other-extension' },
+      { ...sourceSender(), frameId: 1 },
+      { ...sourceSender(), url: 'https://example.com/a/' },
+      uiSender,
+    ])
+      expect(await send(request, sender)).toBeUndefined();
+    for (const sender of [sourceSender(99), sourceSender(1, 'k')])
+      expect(await send(request, sender)).toMatchObject({ ok: false });
+    expect((await store.donation()).dismissedMilestone).toBe(0);
+    expect(await send(request)).toEqual({ ok: true });
+    expect((await store.donation()).dismissedMilestone).toBe(20);
+    for (const tabId of [1, 2])
+      expect(sendDonation).toHaveBeenCalledWith(
+        tabId,
+        expect.objectContaining({
+          donation: { completedDownloads: 40, dismissedMilestone: 20 },
+        }),
+      );
+    await send({ ...request, milestone: 60 });
+    expect((await store.donation()).dismissedMilestone).toBe(20);
+    await send({ scope: 'tad-ui', type: 'dismiss_donation', milestone: 40 }, managerSender);
+    expect((await store.donation()).dismissedMilestone).toBe(40);
+    db.close();
+  });
+
+  it('persists reminder opt-out from Telegram and supports re-enabling in settings', async () => {
+    await start();
+    await hello();
+    const request = { scope: 'tad-donation', type: 'disable_donation_reminders' };
+    expect(await send(request)).toEqual({ ok: true });
+    expect(sendDonation).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        settings: { ...DEFAULT_SETTINGS, donationReminders: false },
+      }),
+    );
+    expect(await send({ scope: 'tad-ui', type: 'list' }, managerSender)).toMatchObject({
+      settings: { donationReminders: false },
+    });
+    await send({ scope: 'tad-ui', type: 'settings', settings: DEFAULT_SETTINGS }, uiSender);
+    expect(sendDonation).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        settings: { donationReminders: true, language: 'en', theme: 'system', keepHistory: true },
+      }),
+    );
+  });
+
+  it('publishes a newer opt-out after a completion snapshot whose settings read was delayed', async () => {
+    await start();
+    await hello();
+    let release: ((value: Record<string, unknown>) => void) | undefined;
+    readSettings.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const finishing = complete('one');
+    await vi.waitFor(() => expect(release).toBeDefined());
+    const disable = send({ scope: 'tad-donation', type: 'disable_donation_reminders' });
+    try {
+      await vi.waitFor(() =>
+        expect(chrome.storage.local.set).toHaveBeenCalledWith({
+          settings: { ...DEFAULT_SETTINGS, donationReminders: false },
+        }),
+      );
+    } finally {
+      release?.({ settings: DEFAULT_SETTINGS });
+    }
+    expect(await finishing).toEqual({ ok: true });
+    expect(await disable).toEqual({ ok: true });
+    expect(sendDonation).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        settings: { ...DEFAULT_SETTINGS, donationReminders: false },
+      }),
+    );
   });
 });

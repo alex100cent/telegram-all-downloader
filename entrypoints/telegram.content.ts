@@ -1,10 +1,26 @@
-import { CHANNEL, commandSchema, isRecord, pageRequestSchema } from '../src/bridge/protocol';
+import {
+  CHANNEL,
+  commandSchema,
+  donationStateSchema,
+  isRecord,
+  pageRequestSchema,
+  settingsSchema,
+} from '../src/bridge/protocol';
+import { createDonationNotice } from '../src/ui/donation-notice';
 
 export default defineContentScript({
   matches: ['https://web.telegram.org/a/*', 'https://web.telegram.org/k/*'],
   runAt: 'document_start',
-  main() {
+  main(ctx) {
     let sessionId: string | undefined;
+    const donationNotice = createDonationNotice(async (action) => {
+      const response: unknown = await chrome.runtime.sendMessage({
+        scope: 'tad-donation',
+        ...action,
+      });
+      return { ok: isRecord(response) && response.ok === true };
+    });
+    ctx.onInvalidated(() => donationNotice.dispose());
     const pending = new Map<
       string,
       { resolve: (value: unknown) => void; timer: ReturnType<typeof setTimeout> }
@@ -60,6 +76,18 @@ export default defineContentScript({
         });
     });
     chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
+      if (
+        sender.id === chrome.runtime.id &&
+        isRecord(message) &&
+        message.scope === 'tad-donation'
+      ) {
+        const donation = donationStateSchema.safeParse(message.donation);
+        const settings = settingsSchema.safeParse(message.settings);
+        if (!donation.success || !settings.success) return false;
+        donationNotice.update(donation.data, settings.data);
+        respond({ ok: true });
+        return false;
+      }
       if (
         sender.id !== chrome.runtime.id ||
         !isRecord(message) ||
