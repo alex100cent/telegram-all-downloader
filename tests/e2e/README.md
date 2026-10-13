@@ -1,4 +1,4 @@
-# Проверка собранного расширения
+# Testing the built extension
 
 ```sh
 npm run build
@@ -6,35 +6,35 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Тесты загружают `.output/chrome-mv3` в отдельный временный Chromium-профиль. Используются реальные MAIN/ISOLATED content scripts, service worker, IndexedDB и popup собранного расширения. Профиль удаляется после каждого теста; личный браузер и Telegram-аккаунт не используются.
+The tests load `.output/chrome-mv3` into a separate temporary Chromium profile. They use the built extension's real MAIN/ISOLATED content scripts, service worker, IndexedDB, and popup. The profile is deleted after each test; the personal browser and Telegram account are not used.
 
-Страницы `https://web.telegram.org/a/` и `/k/` перехватываются Playwright и заменяются собственными синтетическими fixtures. Для A работает настоящий Web Worker с воспроизведённым проверенным протоколом Telegram. Для K fixture предоставляет менеджеры с точным контрактом чтения порций. Другие запросы к Telegram блокируются.
+Playwright intercepts `https://web.telegram.org/a/` and `/k/` and replaces them with custom synthetic fixtures. For A, a real Web Worker runs a reproduction of the verified Telegram protocol. For K, the fixture provides managers with an exact chunk-reading contract. Other requests to Telegram are blocked.
 
-Выбор файла заменён fixture-функцией: она возвращает настоящий OPFS `FileSystemFileHandle`. Создание writer, запись, `close`/`abort`, чтение результата и SHA-256 выполняются браузером. Это проверка browser writer и соединения компонентов, **не проверка нативного диалога выбора файла** и **не живое скачивание из Telegram**.
+File selection is replaced with a fixture function: it returns a real OPFS `FileSystemFileHandle`. Writer creation, writing, `close`/`abort`, reading the result, and SHA-256 are handled by the browser. This tests the browser writer and component connections; it is **not a test of the native file picker** or **a live download from Telegram**.
 
-Сценарии `extension.spec.ts`:
+Scenarios in `extension.spec.ts`:
 
-1. Web A: непрослушанное аудио, настоящий Worker bridge, хвост после 512 KiB, точный SHA-256.
-2. Web K: MAIN → ISOLATED → background → popup, полный файл и точный SHA-256; история сохраняется после закрытия исходной вкладки.
-3. Два пользовательских выбора становятся последовательной очередью; закрытие popup не прерывает запись.
-4. Отмена из popup после первой порции вызывает abort, частичный файл не обозначается сохранённым.
-5. MV3 worker действительно останавливается через Chrome DevTools `ServiceWorker.stopWorker`. После запуска через popup восстанавливается статус ещё работающего writer; повторного чтения уже полученных порций нет.
-6. Web A с CSP через `<meta>`, запрещающей JavaScript `eval`: подключение, команды и сохранение работают после применения политики. Fixture использует внешние скрипты своего origin. Это воспроизводит порядок загрузки [Telegram Web A](https://web.telegram.org/a/), при котором content script исполняется раньше CSP, а валидация команд — позже.
-7. После `history.pushState` в подключённой Web A сессия сохраняется, файл скачивается целиком. Настоящие `chrome.tabs.onUpdated` события записываются в test attachment.
-8. После изменения `location.hash` в подключённой Web A сессия также сохраняется; смена чата внутри SPA не считается закрытием исходной страницы.
+1. Web A: unplayed audio, a real Worker bridge, a tail after 512 KiB, exact SHA-256.
+2. Web K: MAIN → ISOLATED → background → popup, the complete file and exact SHA-256; history is preserved after the source tab closes.
+3. Two user selections become a sequential queue; closing the popup does not interrupt writing.
+4. Cancellation from the popup after the first chunk causes an abort; the partial file is not marked as saved.
+5. The MV3 worker is actually stopped through Chrome DevTools `ServiceWorker.stopWorker`. After it is started through the popup, the status of the still-running writer is restored; chunks already received are not read again.
+6. Web A with a CSP set through `<meta>` that prohibits JavaScript `eval`: connection, commands, and saving work after the policy is applied. The fixture uses external scripts from its own origin. This reproduces the loading order of [Telegram Web A](https://web.telegram.org/a/), where the content script executes before the CSP and command validation happens later.
+7. After `history.pushState` in connected Web A, the session is preserved and the complete file is downloaded. Real `chrome.tabs.onUpdated` events are recorded in a test attachment.
+8. After `location.hash` changes in connected Web A, the session is also preserved; changing chats within the SPA is not considered closure of the source page.
 
-Сценарии `failures.spec.ts`:
+Scenarios in `failures.spec.ts`:
 
-9. Writer отклоняет вторую запись (имитация переполненного диска): чтение останавливается, writer прерывается, на диске пустой файл, popup и страница показывают код `disk_error`. Текст диагностики не содержит имени файла и ссылок.
-10. Writer отклоняет финализацию после передачи всех порций: результат тот же, ложного «Сохранено» нет.
-11. Исходная вкладка закрыта во время передачи: задание «Прервано» с кодом `interrupted`, файл пуст.
-12. Исходная вкладка перезагружена во время передачи: то же поведение через новую сессию страницы.
-13. Popup и `version_name` в manifest показывают одинаковый идентификатор сборки.
+9. The writer rejects the second write (simulating a full disk): reading stops, the writer is aborted, the file on disk is empty, and the popup and page show the `disk_error` code. Diagnostic text contains no file name or links.
+10. The writer rejects finalization after all chunks have transferred: the same result, with no false “Saved” status.
+11. The source tab closes during transfer: the task is “Interrupted” with code `interrupted`, and the file is empty.
+12. The source tab reloads during transfer: the same behavior through a new page session.
+13. The popup and `version_name` in the manifest show the same build identifier.
 
-Ошибки диска имитируются обёрткой над настоящим OPFS writer; диск владельца не заполняется.
+Disk errors are simulated by wrapping the real OPFS writer; the owner's disk is not filled.
 
-Сценарии `batch.spec.ts` проверяют выбор нескольких вложений в одну OPFS-папку и работу менеджера: точные SHA-256 и последнюю неполную порцию, последовательность задач, сохранение после закрытия панели, keep-both при одинаковых именах, skip без чтения байтов, явный overwrite и шаблоны имён, массовую отмену, частичный сбой без потери других файлов, повтор только неудачного элемента с новым выбором папки и перезагрузку исходной вкладки. Отдельный сценарий использует Worker-протокол Web A. Directory picker подменён, но проверяется его вызов при активном пользовательском жесте; фактическая запись использует браузерный OPFS. Снимки менеджера EN/light, RU/dark и панели сохраняются в `test-results/` для визуальной проверки. Это не подтверждает работу нативного диалога папки в Telegram.
+Scenarios in `batch.spec.ts` test selecting multiple attachments into one OPFS folder and manager behavior: exact SHA-256 hashes and the final incomplete chunk, task sequencing, saving after the panel closes, keep-both with identical names, skip without reading bytes, explicit overwrite and name templates, bulk cancellation, partial failure without losing other files, retrying only the failed item with a new folder selection, and reloading the source tab. A separate scenario uses the Web A Worker protocol. The directory picker is replaced, but its invocation during an active user gesture is verified; actual writing uses the browser's OPFS. Screenshots of the manager in EN/light and RU/dark, and of the panel, are saved in `test-results/` for visual inspection. This does not confirm that the native folder dialog works in Telegram.
 
-Профиль, Playwright traces и результаты находятся вне исходников или в игнорируемом `test-results/`. При сбое сохраняется trace. Живые A/K, Chrome/Яндекс, нативный picker, реальные private/protected channels и большие файлы проверяются отдельно по ручной матрице.
+The profile, Playwright traces, and results are stored outside the source tree or in the ignored `test-results/` directory. A trace is saved on failure. Live A/K, Chrome/Yandex, the native picker, real private/protected channels, and large files are tested separately using the manual matrix.
 
-Основа harness: [Playwright Chrome extensions](https://playwright.dev/docs/chrome-extensions), [Chrome DevTools ServiceWorker protocol](https://chromedevtools.github.io/devtools-protocol/tot/ServiceWorker/).
+Harness references: [Playwright Chrome extensions](https://playwright.dev/docs/chrome-extensions), [Chrome DevTools ServiceWorker protocol](https://chromedevtools.github.io/devtools-protocol/tot/ServiceWorker/).

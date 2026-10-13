@@ -23,7 +23,7 @@ The MVP is implemented and published as a **preview**, not a fully validated rel
 - Free, open source, MIT-licensed, with optional donations. No subscription, download quota, separate extension account, media backend, or analytics.
 - Initial platform: Chrome and Yandex Browser on macOS; both Telegram Web A and K matter. The owner will test Yandex separately. Windows is later work.
 - MVP interaction: one attachment per action. A queue of individually selected downloads already exists. Bulk selection, history scanning, stories, and avatars are later features.
-- Communicate with the owner in Russian; write code in English. This handoff is intentionally in English. Keep code comments minimal and useful.
+- Communicate with the owner in Russian; write project files, including code, documentation, and reports, in English. Preserve explicit localizations and multilingual test fixtures. Follow [AGENTS.md](AGENTS.md) and keep code comments minimal and useful.
 
 Read [README.md](README.md), [docs/compatibility.md](docs/compatibility.md), and [docs/manual-testing.md](docs/manual-testing.md) first. [PLAN.md](PLAN.md) contains the original requirements and longer roadmap; some sections describe alternatives that were not implemented. Use the code and compatibility report for current behavior.
 

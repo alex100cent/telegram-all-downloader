@@ -1,16 +1,16 @@
-# Уведомления о сторонних компонентах
+# Third-party notices
 
-Ниже перечислен сторонний runtime-код в установочной Chromium-сборке Telegram All Downloader 0.1.0. Версии сверены с `package-lock.json` и установленными пакетами 9 октября 2026. Собственный код проекта лицензирован отдельно в [LICENSE](LICENSE).
+The third-party runtime code included in the installable Chromium build of Telegram All Downloader 0.1.0 is listed below. Versions were checked against `package-lock.json` and the installed packages on October 9, 2026. The project’s own code is licensed separately in [LICENSE](LICENSE).
 
-Проверены прямые runtime-импорты приложения, их зависимости и WXT/Vite runtime helpers. Тестовые инструменты, TypeScript, типы и dev-server в установочную сборку не включаются. Код Telegram Web и Telegram-Downloader в неё не копируется.
+The application’s direct runtime imports, their dependencies, and WXT/Vite runtime helpers were reviewed. Test tools, TypeScript, types, and the development server are not included in the installable build. Telegram Web and Telegram-Downloader code is not copied into it.
 
-Этот перечень и полные тексты лицензий также поставляются внутри расширения как `THIRD_PARTY_NOTICES.txt`. При обновлении зависимостей перечень и оба файла нужно обновить вместе.
+This list and the full license texts are also distributed inside the extension as `THIRD_PARTY_NOTICES.txt`. When dependencies change, update the list and both files together.
 
-## React, React DOM и Scheduler
+## React, React DOM and Scheduler
 
-Пакеты: react 19.3.0, react-dom 19.3.0, scheduler 0.28.0.
+Packages: react 19.3.0, react-dom 19.3.0, scheduler 0.28.0.
 
-Исходный проект: [facebook/react](https://github.com/facebook/react). Интерфейс popup и планировщик React.
+Upstream project: [facebook/react](https://github.com/facebook/react). Popup UI and React scheduler.
 
 ```text
 MIT License
@@ -38,9 +38,9 @@ SOFTWARE.
 
 ## idb
 
-Пакеты: idb 8.0.4.
+Packages: idb 8.0.4.
 
-Исходный проект: [jakearchibald/idb](https://github.com/jakearchibald/idb). Обёртка IndexedDB для локальных заданий и истории.
+Upstream project: [jakearchibald/idb](https://github.com/jakearchibald/idb). IndexedDB wrapper for local jobs and history.
 
 ```text
 ISC License (ISC)
@@ -53,9 +53,9 @@ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH RE
 
 ## Zod
 
-Пакеты: zod 4.6.5.
+Packages: zod 4.6.5.
 
-Исходный проект: [colinhacks/zod](https://github.com/colinhacks/zod). Проверка схем сообщений между контекстами расширения.
+Upstream project: [colinhacks/zod](https://github.com/colinhacks/zod). Message schema validation between extension contexts.
 
 ```text
 MIT License
@@ -81,11 +81,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## WXT и @wxt-dev/browser
+## WXT and @wxt-dev/browser
 
-Пакеты: wxt 0.21.4, @wxt-dev/browser 0.3.4.
+Packages: wxt 0.21.4, @wxt-dev/browser 0.3.4.
 
-Исходный проект: [wxt-dev/wxt](https://github.com/wxt-dev/wxt). Runtime-обёртки entrypoint/content-script и доступ к browser API. Текст MIT подтверждён в [официальном LICENSE](https://github.com/wxt-dev/wxt/blob/main/LICENSE) (Copyright (c) 2023 Aaron).
+Upstream project: [wxt-dev/wxt](https://github.com/wxt-dev/wxt). Runtime wrappers for entrypoints/content scripts and access to browser APIs. The MIT text was confirmed in the [official LICENSE](https://github.com/wxt-dev/wxt/blob/main/LICENSE) (Copyright (c) 2023 Aaron).
 
 ```text
 MIT License
@@ -113,9 +113,9 @@ SOFTWARE.
 
 ## Vite: modulepreload helper
 
-Пакеты: vite 8.3.4.
+Packages: vite 8.3.4.
 
-Исходный проект: [vitejs/vite](https://github.com/vitejs/vite). В production popup встроен modulepreload helper Vite. Инструменты сборки и их серверные зависимости в расширение не поставляются.
+Upstream project: [vitejs/vite](https://github.com/vitejs/vite). Vite’s modulepreload helper is embedded in the production popup. Build tools and their server-side dependencies are not shipped with the extension.
 
 ```text
 MIT License

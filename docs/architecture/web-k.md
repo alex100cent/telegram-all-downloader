@@ -1,39 +1,39 @@
-# Адаптер Telegram Web K
+# Telegram Web K adapter
 
-Дата исследования: 9 октября 2026. Реализация расширения написана отдельно; код `Telegram-Downloader` не использовался. Официальные исходники Telegram Web K прочитаны для определения формата данных и доступных вызовов, не включены в расширение.
+Research date: October 9, 2026. The extension implementation was written separately; no `Telegram-Downloader` code was used. The official Telegram Web K sources were read to identify data formats and available calls; they are not included in the extension.
 
-## Подтверждённый путь
+## Confirmed path
 
-Проверены официальный репозиторий [morethanwords/tweb](https://github.com/morethanwords/tweb), commit `18f99a99f62f62cd234b16af23a21664b62babb8`, и публичная сборка `https://web.telegram.org/k/`: `apiManagerProxy-DVXobuyu.js`, `index.worker-DGfthI1r.js`. Имена файлов сборки — свидетельство исследования, в коде адаптера не закрепляются.
+Reviewed the official [morethanwords/tweb](https://github.com/morethanwords/tweb) repository, commit `18f99a99f62f62cd234b16af23a21664b62babb8`, and the public build at `https://web.telegram.org/k/`: `apiManagerProxy-DVXobuyu.js`, `index.worker-DGfthI1r.js`. Build filenames are evidence of the research and are not hardcoded in the adapter.
 
-1. В MAIN world доступны `window.apiManagerProxy`, `window.rootScope` и `window.createProxiedManagersForAccount`. Это подтверждено исходниками и опубликованной сборкой. Настройка [MOUNT_CLASS_TO](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/config/debug.ts) публикует объекты в `window` также в production.
-2. В ленте `.bubble[data-peer-id][data-mid]` адресует сообщение. В альбомах выбирается вложенный `.grouped-item[data-mid]` или `.document-container[data-mid]`. Для нескольких вложений одного сообщения используется `.album-item[data-index]`. Источником метаданных служит `apiManagerProxy.getMessageByPeer(peerId, mid)`; аудиоплеер и последние `blob:` URL не участвуют.
-3. Просмотрщик имеет `window.appMediaViewer.target` с `peerId`, `mid`, `message` и `index`. Поэтому переключение слайда обновляет точную идентичность кнопки. Истории и аватары не имеют подходящего сообщения и в discovery не попадают.
-4. [`createProxiedManagersForAccount(slot)`](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/lib/getProxiedManagers.ts) создаёт доступ к менеджерам текущего Telegram-аккаунта через уже работающий worker. Номер слота берётся из `?account=`, но в идентичности хранится Telegram user ID. Перед каждой порцией проверяются слот, `rootScope.myId` и ответ `appUsersManager.getSelf()`, чтобы обнаружить смену пользователя в слоте.
-5. [`apiFileManager.requestFilePart`](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/lib/appManagers/apiFileManager.ts) получает исходные байты через существующий `upload.getFile`. В опубликованной сборке сохранены этот метод и обработка `FILE_REFERENCE_EXPIRED` / `FILE_REFERENCE_INVALID` через Telegram reference storage. Повторный вход, собственный MTProto-клиент и чтение auth keys не нужны.
+1. `window.apiManagerProxy`, `window.rootScope`, and `window.createProxiedManagersForAccount` are available in the MAIN world. This is confirmed by the sources and the published build. The [MOUNT_CLASS_TO](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/config/debug.ts) setting exposes these objects on `window` in production as well.
+2. In the message list, `.bubble[data-peer-id][data-mid]` identifies a message. For albums, the nested `.grouped-item[data-mid]` or `.document-container[data-mid]` is selected. Multiple attachments in one message use `.album-item[data-index]`. Metadata comes from `apiManagerProxy.getMessageByPeer(peerId, mid)`; the audio player and recent `blob:` URLs are not involved.
+3. The viewer has `window.appMediaViewer.target` with `peerId`, `mid`, `message`, and `index`. Changing slides therefore updates the button's exact identity. Stories and avatars have no suitable message and are excluded from discovery.
+4. [`createProxiedManagersForAccount(slot)`](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/lib/getProxiedManagers.ts) provides access to the current Telegram account's managers through the worker that is already running. The slot number comes from `?account=`, but the identity stores the Telegram user ID. Before each chunk, the slot, `rootScope.myId`, and the `appUsersManager.getSelf()` response are checked to detect a user change within the slot.
+5. [`apiFileManager.requestFilePart`](https://github.com/morethanwords/tweb/blob/18f99a99f62f62cd234b16af23a21664b62babb8/src/lib/appManagers/apiFileManager.ts) retrieves original bytes through the existing `upload.getFile`. The published build retains this method and handles `FILE_REFERENCE_EXPIRED` / `FILE_REFERENCE_INVALID` through Telegram reference storage. A new login, a separate MTProto client, and reading auth keys are unnecessary.
 
-Это нестабильный внутренний API Telegram, а не публичная гарантия совместимости. Если нужный runtime отсутствует, адаптер возвращает `unsupported_client`. Расширение не скачивает исполняемый код для восстановления совместимости.
+This is an unstable internal Telegram API, not a public compatibility guarantee. If the required runtime is absent, the adapter returns `unsupported_client`. The extension does not download executable code to restore compatibility.
 
-Для дедупликации между A/K используются серверный `message.id` и единое представление channel peer (`-1_000_000_000_000 - channel_id`). Внутренний K `mid` остаётся только адресом runtime. Оба адаптера обозначают выбранный полный файл как `variant: original`; конкретный размер фото хранится в закрытом file location.
+Deduplication between A/K uses the server `message.id` and a shared channel peer representation (`-1_000_000_000_000 - channel_id`). K's internal `mid` remains only a runtime address. Both adapters identify the selected full file as `variant: original`; the specific photo size is kept in the private file location.
 
-## Получение файла
+## File retrieval
 
-У документов используется `inputDocumentFileLocation` без thumbnail-варианта. Один и тот же путь покрывает аудио, voice, кружочки, видео, GIF/MP4, произвольные документы, WebP, TGS и WebM-стикеры.
+Documents use `inputDocumentFileLocation` without a thumbnail variant. The same path covers audio, voice messages, round videos, videos, GIF/MP4, arbitrary documents, WebP, TGS, and WebM stickers.
 
-Для фото выбирается самый большой по разрешению доступный `photoSize` или `photoSizeProgressive`; `photoStrippedSize` и `photoCachedSize` не используются. Для progressive известный размер берётся из последнего/максимального размера прогрессивного представления. Сохраняется доступное Telegram JPEG-фото, без дополнительного пережатия.
+For photos, the available `photoSize` or `photoSizeProgressive` with the highest resolution is selected; `photoStrippedSize` and `photoCachedSize` are not used. For progressive photos, the known byte size is taken from the last/largest size of the progressive representation. The available Telegram JPEG photo is saved without additional recompression.
 
-Получение оригинальных TGS-байтов принципиально: обычный Telegram `downloadMedia` может разжать стикер для renderer. Адаптер читает `requestFilePart`, поэтому не подменяет gzip TGS JSON-файлом с неверным расширением. Голосовое сохраняется в фактическом MIME/контейнере; MP4-анимация не переименовывается в GIF.
+Retrieving the original TGS bytes is essential: Telegram's standard `downloadMedia` may decompress a sticker for the renderer. The adapter reads through `requestFilePart`, so it does not substitute a JSON file with an incorrect extension for gzip TGS. Voice messages are saved with their actual MIME type/container; MP4 animations are not renamed to GIF.
 
-Один `read` получает не более 512 KiB. Диапазоны выровнены на 4 KiB; общий executor использует 512 KiB. Следующая порция запрашивается после записи предыдущей. В расширении не собирается полный Blob и не передаются байты через extension messaging. Данные `access_hash`, `file_reference` и Telegram file location остаются в замыкании MAIN world; наружу выходит только `MediaInfo`.
+One `read` retrieves at most 512 KiB. Ranges are aligned to 4 KiB; the shared executor uses 512 KiB. The next chunk is requested after the previous one has been written. The extension does not assemble a full Blob or pass bytes through extension messaging. `access_hash`, `file_reference`, and the Telegram file location remain in a MAIN world closure; only `MediaInfo` is exposed outside it.
 
-Ответ проверяется по типу, предельной длине и ожидаемому числу байтов. При известном размере короткая порция считается ошибкой, а не успешным концом файла. Ожидание порции имеет тайм-аут 60 секунд. Сетевая ошибка доступна для явного повтора.
+Responses are checked for type, maximum length, and expected byte count. When the size is known, a short chunk is treated as an error rather than a successful end of file. Waiting for a chunk has a 60-second timeout. Network errors allow an explicit retry.
 
-Отмена немедленно прекращает ожидание и дальнейшие запросы. Уже отправленный запрос одной порции может завершиться внутри Telegram. Адаптер не вызывает общую отмену по document ID, чтобы не прервать воспроизведение этого документа самим Telegram. До завершения такого запроса повторный `read` того же source запрещён.
+Cancellation immediately stops waiting and prevents further requests. A request for one chunk that has already been sent may complete inside Telegram. The adapter does not invoke shared cancellation by document ID, to avoid interrupting Telegram's own playback of that document. Another `read` on the same source is prohibited until that request finishes.
 
-`noforwards` не меняется: адаптер использует доступный текущему пользователю файл и собственную кнопку. Недоступное платное preview без `extended_media[index].media` и TTL-медиа не обрабатываются. Метаданные, доступные только в превью ссылки, не принимаются за вложение сообщения.
+`noforwards` is unchanged: the adapter uses the file available to the current user and its own button. Unavailable paid previews without `extended_media[index].media` and TTL media are not handled. Metadata available only in a link preview is not treated as a message attachment.
 
-## Что проверено и что ещё требует живой проверки
+## Verified behavior and remaining live checks
 
-Автоматические fixtures проверяют точный выбор непрослушанного аудио при наличии чужого активного плеера, все заявленные виды документов, исходные TGS-байты, выбор полного фото, отдельные элементы альбома, смену слайда просмотрщика, доступный protected attachment, смену аккаунта, редактирование медиа, отмену, обрезанный ответ и несовместимый runtime. Последовательное чтение проверяется сравнением всех полученных байтов с исходным тестовым массивом.
+Automated fixtures verify exact selection of unplayed audio while an unrelated player is active, all listed document types, original TGS bytes, full photo selection, individual album items, viewer slide changes, an accessible protected attachment, account changes, media edits, cancellation, truncated responses, and an incompatible runtime. Sequential reads are checked by comparing all received bytes with the original test array.
 
-Эти проверки не заменяют авторизованный Telegram. До статуса проверенного релиза остаются Chrome и Яндекс.Браузер на macOS, реальные все типы вложений, protected/private channels, истечение `file_reference` на сервере, File System Access picker/writer, реальный 1 GiB-файл и измерение памяти всего пути. Подтверждение наличия методов в опубликованной сборке не выдаётся за выполненное скачивание в пользовательском аккаунте.
+These checks do not replace an authenticated Telegram session. A verified release still requires checks in Chrome and Yandex Browser on macOS, real examples of every attachment type, protected/private channels, server-side `file_reference` expiry, the File System Access picker/writer, a real 1 GiB file, and memory measurements across the full path. Confirming methods in the published build is not presented as a completed download in a user account.

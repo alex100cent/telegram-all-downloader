@@ -1,26 +1,26 @@
-# Изменения
+# Changelog
 
-## 0.2.1 — предварительная версия
+## 0.2.1 — preview
 
-- Добавлены необязательные донаты через Lava: ссылки в README, GitHub, popup и менеджере.
-- После каждых 20 успешно сохранённых файлов показывается небольшое напоминание в Telegram, popup и менеджере. Оно не прерывает очередь и не открывает страницы автоматически; закрытие действует до следующего порога, а настройка позволяет отключить напоминания полностью.
-- Счётчик хранится локально отдельно от истории, не учитывает ошибки, отмены и пропуски. Несколько накопившихся порогов объединяются в одно напоминание.
-- Английский стал языком по умолчанию для новых установок; русский и язык браузера доступны в настройках. Существующий выбор языка сохраняется.
+- Added optional donations through Lava: links in the README, GitHub, popup, and manager.
+- A small reminder appears in Telegram, the popup, and the manager after every 20 successfully saved files. It does not interrupt the queue or open pages automatically; dismissal lasts until the next threshold, and a setting can disable reminders entirely.
+- The counter is stored locally, separately from history, and excludes errors, cancellations, and skips. Multiple accumulated thresholds are combined into one reminder.
+- English is now the default language for new installations; Russian and the browser language are available in settings. Existing language selections are preserved.
 
-## 0.2.0 — предварительная версия
+## 0.2.0 — preview
 
-Добавлены групповой выбор вложений, сохранение в выбранную папку и отдельный менеджер загрузок.
+Added batch attachment selection, saving to a chosen folder, and a separate download manager.
 
-- До 200 обнаруженных на текущей странице вложений, фильтр типа, выбор перечисленных элементов альбома. Обновление списка после ручной прокрутки; автоматической выгрузки всей истории канала нет.
-- Один выбор папки для группы и последовательная запись. Политики совпадений: сохранить оба, пропустить, явно включить перезапись. Безопасные имена: исходное, ID сообщения + имя, номер + имя.
-- Менеджер с поиском по имени, фильтрами типа/статуса/группы, страницами 25/50/100 и выбором до 200 записей. Массовые отмена и повтор, отдельный статус «Пропущено», фактическое имя файла после совпадения.
-- Повтор группы открывает Telegram и требует нового выбора папки. Индивидуальный повтор при утрате вкладки открывает исходное сообщение, когда ссылка доступна; массовый повтор сообщает принятые и отклонённые запросы.
-- Сводки считаются по сохранившейся истории: максимум 500 завершённых записей и 30 дней. Popup показывает до пяти активных и пяти последних записей, полный список доступен в менеджере.
-- Дескрипторы файлов/папок и пути папок не сохраняются расширением. RU/EN и обе темы доступны в менеджере и панели выбора.
-- QA-скрипт различает доказанное совпадение (`0`), найденную ошибку (`1`) и недоказанный результат (`2`). Для переименованных копий `--expected` назначает один эталон всем входным файлам запуска.
+- Up to 200 attachments discovered on the current page, a type filter, and selection of listed album items. Refresh the list after scrolling manually; there is no automatic export of the channel's entire history.
+- One folder selection per batch and sequential writes. Collision policies: keep both, skip, or explicitly enable overwrite. Safe naming options: original name, message ID + name, or number + name.
+- A manager with filename search, type/status/batch filters, page sizes of 25/50/100, and selection of up to 200 records. Bulk cancellation and retry, a separate “Skipped” status, and the actual filename after collision handling.
+- Retrying a batch opens Telegram and requires a new folder selection. If the tab is lost, an individual retry opens the original message when a link is available; bulk retry reports accepted and rejected requests.
+- Summaries are calculated from retained history: a maximum of 500 terminal records and 30 days. The popup shows up to five active and five recent records; the full list is available in the manager.
+- The extension does not store file/folder handles or folder paths. RU/EN and both themes are available in the manager and selection panel.
+- The QA script distinguishes a proven match (`0`), a detected error (`1`), and an inconclusive result (`2`). For renamed copies, `--expected` assigns one reference sample to all input files in the run.
 
-Нативный выбор папки и новые групповые сценарии в настоящем Telegram ожидают проверки владельцем. Прежние живые результаты одиночных загрузок не доказывают новую функциональность. Проверки недостающих форматов, больших файлов и Яндекс.Браузера также остаются открытыми; см. [матрицу совместимости](docs/compatibility.md) и [ручной чек-лист](docs/manual-testing.md).
+The native folder picker and new batch scenarios in real Telegram await owner verification. Previous live results for individual downloads do not prove the new functionality. Checks for missing formats, large files, and Yandex Browser also remain open; see the [compatibility matrix](docs/compatibility.md) and [manual checklist](docs/manual-testing.md).
 
-## 0.1.0 — предварительная версия
+## 0.1.0 — preview
 
-Первый одиночный сценарий для Telegram Web A/K: кнопки у вложений, потоковая запись, локальная очередь, отмена, история, повтор, RU/EN и темы. Добавлены идентификация сборки, локальная диагностика и инструменты проверки образцов. Живые результаты и их ограничения записаны в [матрице совместимости](docs/compatibility.md).
+The first individual download flow for Telegram Web A/K: attachment buttons, streaming writes, a local queue, cancellation, history, retry, RU/EN, and themes. Added build identification, local diagnostics, and sample verification tools. Live results and their limitations are recorded in the [compatibility matrix](docs/compatibility.md).

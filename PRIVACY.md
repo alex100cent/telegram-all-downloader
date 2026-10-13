@@ -1,19 +1,47 @@
-# Обработка данных
+# Privacy Policy
 
-Telegram All Downloader работает локально в браузере. У расширения нет сервера для медиа, аналитики, рекламных SDK или дополнительной учётной записи.
+Last updated: October 13, 2026
 
-Для выбранного вложения адаптер использует данные текущего Telegram Web: идентификаторы аккаунта, чата, сообщения и файла, имя, тип и размер. Внутренние параметры доступа к самому файлу остаются в контексте Telegram; ключи авторизации, пароли и коды входа не копируются.
+Telegram All Downloader is a free, open-source browser extension that saves selected Telegram Web message attachments to your device. It works with your existing Telegram session. The extension has no media server, analytics, advertising SDK, or separate user account.
 
-Байты идут через текущий клиент Telegram в выбранный пользователем файл или папку для группы файлов. Они не отправляются разработчику. Расширение не получает общего доступа ко всем локальным файлам: файл или папка выбираются через системный диалог браузера. Для папки запрашивается доступ на чтение и запись, необходимый для проверки совпадающих имён и сохранения выбранных вложений. Политика по умолчанию сохраняет оба файла; перезапись включается пользователем явно.
+## Telegram data and downloads
 
-Дескрипторы выбранных файлов и папок используются в памяти страницы на время очереди. Расширение не записывает их, абсолютные пути и имена папок в IndexedDB, настройки или диагностику. После закрытия или перезагрузки исходной страницы для повтора нужно снова выбрать место сохранения. Сам браузер управляет разрешениями системного выбора независимо от хранилища расширения.
+To recognize attachments and save the ones you choose, the extension processes attachment data available in your current Telegram Web session: account, chat, message and file identifiers, filenames, media types, MIME types, sizes and message links. Attachment metadata may be held in page memory while the extension identifies available files. Internal parameters needed to access a file stay in the Telegram page context. The extension does not copy your Telegram authorization keys, passwords or sign-in codes.
 
-Локально сохраняются настройки и история выбранных загрузок. История может содержать имена файлов, фактическое имя после разрешения совпадения, идентификаторы и ссылки на сообщения. Для группы сохраняются случайный идентификатор и общая подпись со временем создания; название чата и путь папки в подпись не входят. История не синхронизируется с облаком и не шифруется отдельно расширением. Пользователь может отключить или очистить историю; это не удаляет сохранённые файлы. Автоматическая очистка ограничивает завершённую историю 500 записями и 30 днями, незавершённые задания сохраняются до разрешения их состояния. Менеджер показывает сводки только по сохранившимся записям.
+Media bytes are retrieved through the current Telegram client and written to the file or folder you select. The extension does not upload media or download metadata to the developer or another media service. Telegram's own network requests and data handling remain subject to Telegram's policies.
 
-Для необязательных напоминаний о донате отдельно хранятся общий счётчик успешно сохранённых файлов и последний закрытый порог напоминания. Счётчик начинается после установки версии с напоминаниями, не содержит сведений о файлах и сохраняется при очистке или отключении истории. Ошибки, отмены и пропуски не учитываются. Неблокирующее предложение купить автору кофе появляется после каждых 20 успешных сохранений; его можно закрыть до следующего порога или отключить в настройках. Накопленные напоминания объединяются в одно.
+The extension does not receive general access to all your local files. You choose a destination through the browser's system file or folder dialog. Folder downloads request read and write access to that folder so the extension can check conflicting names and save selected attachments. The default conflict policy keeps both files; overwriting requires your explicit choice.
 
-Ссылки помощи и доната открываются только по действию пользователя. Донаты принимаются на [Lava](https://app.lava.top/294798508); страница не загружается до нажатия на ссылку. Эти внешние сайты применяют собственные правила обработки данных. Счётчик, история и диагностика не отправляются автоматически; ссылки доната не содержат сведений о загрузках.
+File and folder handles are held in page memory for the queue. The extension does not persist these handles, absolute paths or folder names in IndexedDB, settings or diagnostics. After closing or reloading the source Telegram page, retrying requires you to choose a destination again. The browser manages file-picker permissions separately from the extension's storage.
 
-Для неудачной загрузки popup или менеджер может показать текст диагностики. Он копируется в буфер обмена только по нажатию пользователя и целиком виден до копирования: версия и сборка расширения, браузер и ОС, клиент Telegram A/K, тип вложения, MIME, округлённый размер, состояние, код ошибки, процент передачи и номер попытки. Имена файлов, ссылки, текст сообщений, идентификаторы аккаунтов, чатов, сообщений и сессий в него не входят. Расширение ничего не отправляет само: пользователь решает, куда вставить этот текст.
+## Local settings and history
 
-Сборка не использует `cookies`, `debugger`, `<all_urls>` или удалённо загружаемый исполняемый код. Доступ к `web.telegram.org` нужен для добавления кнопок и работы с выбранными вложениями; `storage` — для настроек. IndexedDB хранит историю и состояния очереди.
+Settings are stored in `chrome.storage.local`. IndexedDB stores the queue, download history, page connection state and the donation reminder counter. None of this extension data is synced to a cloud service or automatically sent to the developer.
+
+Download records can include the original filename, the final saved filename, attachment identifiers and message links, file type and size, progress, result, attempt count and timestamps. Queue and connection records also include browser tab IDs and random page session IDs. A batch has a random identifier and a generic label with its creation time; that label does not contain the chat name or destination folder path.
+
+History is enabled by default. You can turn it off or clear completed history in Settings; doing so does not delete saved files. Automatic cleanup limits finished, failed, cancelled, interrupted and skipped records to 500 entries and 30 days. Active jobs remain until their state is resolved. Manager summaries describe only the records still retained. The extension does not apply its own encryption to locally stored history.
+
+## Optional donation reminders
+
+A separate local counter records the number of successfully saved files and the last dismissed reminder milestone. It starts when a version with reminders is installed, contains no file details, and remains when download history is cleared or disabled. Failed, cancelled and skipped downloads do not count.
+
+A nonblocking invitation to buy the developer a coffee appears after every 20 successful saves. You can dismiss it until the next milestone or disable reminders in Settings. Accumulated reminders are combined into one. Every feature remains free regardless of whether you donate.
+
+Support and donation links open only when you click them. Donations use [Lava](https://app.lava.top/294798508); its page is not loaded before you click. Donation links do not include download details, and the extension does not transmit the counter or history to Lava. External sites, including Lava and GitHub, apply their own privacy policies and may process information when you visit them. The extension does not handle payment details.
+
+## Diagnostics and support
+
+For a failed download, the popup or manager can display a diagnostic report. The full report is visible before copying and is copied to the clipboard only when you click the copy button. It includes the extension version and build, browser and operating system, Telegram client A/K, attachment type, MIME type, rounded size, state, error code, transfer percentage and attempt number.
+
+The report excludes filenames, message links and text, and account, chat, message and session identifiers. It is not sent automatically: you decide whether and where to paste it. If you submit an issue on GitHub, the information you choose to include is handled by GitHub and may be public. Do not include private messages or account credentials.
+
+## Permissions and limited use
+
+Access to `https://web.telegram.org/*` is used to add download controls and work with attachments in Telegram Web A and K. The `storage` permission saves your settings locally. The extension does not request `cookies`, `debugger` or `<all_urls>`, and it does not load remotely hosted executable code.
+
+Telegram All Downloader's use of user data complies with the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/limited-use), including its Limited Use requirements. Data is used for the disclosed attachment-saving features and their operation. It is not sold, used for personalized advertising or used to determine creditworthiness.
+
+## Contact and changes
+
+The extension is maintained by [alex100cent](https://github.com/alex100cent). For privacy questions, use the project's [GitHub issue tracker](https://github.com/alex100cent/telegram-all-downloader/issues) without posting sensitive data. Updates to this policy will be published here with a revised date.

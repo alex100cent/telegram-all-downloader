@@ -2,7 +2,7 @@ Telegram All Downloader 0.1.0 — third-party notices
 
 This file covers third-party runtime components included in the production Chromium extension. Versions are pinned in package-lock.json. Build/test tools and their server-side dependencies are not shipped with the extension. Telegram Web and Telegram-Downloader code is not included.
 
-React, React DOM и Scheduler
+React, React DOM and Scheduler
 react 19.3.0, react-dom 19.3.0, scheduler 0.28.0
 https://github.com/facebook/react
 
@@ -71,7 +71,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------
 
-WXT и @wxt-dev/browser
+WXT and @wxt-dev/browser
 wxt 0.21.4, @wxt-dev/browser 0.3.4
 https://github.com/wxt-dev/wxt
 
