@@ -1,6 +1,10 @@
 # Telegram All Downloader
 
-Download media from **Telegram Web A and K**, including private and protected channels you can access. Free and open source, using your existing Telegram session.
+**100% free and open source.** Save media from **Telegram Web A and K** in a few clicks, including private and protected channels you can access.
+
+No subscriptions, paywalls or analytics. Files download through your existing Telegram session directly to your device. Your media and download history are never sent to the developer.
+
+**[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/telegram-all-downloader/lpaojniichemaogjmkfinkpflcppfhec)**
 
 ![Saving attachments and tracking downloads in Telegram All Downloader](docs/assets/demo.gif)
 
@@ -11,9 +15,14 @@ Download media from **Telegram Web A and K**, including private and protected ch
 - Select up to **200 discovered attachments** and save them to one folder.
 - Download manager with progress, search, filters, cancel and retry.
 - File naming templates and options to keep both, skip or overwrite duplicates.
-- English and Russian; light and dark themes. No analytics or media servers.
+- English and Russian; light and dark themes.
 
 ## Installation
+
+Install from the **[Chrome Web Store](https://chromewebstore.google.com/detail/telegram-all-downloader/lpaojniichemaogjmkfinkpflcppfhec)**, then open [Telegram Web A](https://web.telegram.org/a/) or [Web K](https://web.telegram.org/k/). Reload any already-open Telegram tabs.
+
+<details>
+<summary>Build from source</summary>
 
 Clone or download this repository. With **Node.js 22.18+** installed, run in the project folder:
 
@@ -26,6 +35,8 @@ npm run build
 2. Enable **Developer mode** and click **Load unpacked**.
 3. Select the project's `.output/chrome-mv3` folder.
 4. Open [Telegram Web A](https://web.telegram.org/a/) or [Web K](https://web.telegram.org/k/). Reload any already-open Telegram tabs.
+
+</details>
 
 ## Usage
 

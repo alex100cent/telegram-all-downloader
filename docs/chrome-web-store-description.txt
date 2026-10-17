@@ -1,0 +1,17 @@
+100% free and open source. No subscriptions, no paywalls, no analytics. Save Telegram media in a few clicks, directly to your device.
+
+Your media and download history are never sent to the developer or another media service. Downloads use your existing Telegram session; settings and download history stay locally in your browser.
+
+Save time with individual and batch downloads:
+
+• Save photos, videos, audio, voice messages, video messages, animations, documents and stickers.
+• Download individual files or select up to 200 discovered attachments and save them to one folder.
+• Track progress, cancel and retry downloads in the download manager.
+• Customize filenames and choose how to handle duplicate files.
+• Switch between English and Russian, with light and dark themes.
+
+Works with Telegram Web A and K, including private and protected channels you already have access to. Keep the Telegram tab open while downloading. Batches include discovered attachments, not the entire chat history.
+
+Every feature stays free. Donations are optional, and coffee reminders can be disabled in Settings.
+
+An independent project, not affiliated with Telegram.
